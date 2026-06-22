@@ -348,6 +348,17 @@ def cmd_new(args: argparse.Namespace) -> int:
     os.execvp("claude", ["claude", "--session-id", new_uuid])
 
 
+def cmd_checkout(args: argparse.Namespace) -> int:
+    cwd = Path.cwd()
+    result = subprocess.run(
+        ["git", "checkout", args.branch],
+        cwd=cwd,
+    )
+    if result.returncode != 0:
+        return result.returncode
+    return cmd_sync(argparse.Namespace())
+
+
 # -------------------------- argparse / main --------------------------------
 
 
@@ -357,6 +368,10 @@ def main(argv: list[str] | None = None) -> int:
 
     p_sync = sub.add_parser("sync", help="rebuild symlinks to match current branch")
     p_sync.set_defaults(func=cmd_sync)
+
+    p_co = sub.add_parser("checkout", help="git checkout + sms sync")
+    p_co.add_argument("branch")
+    p_co.set_defaults(func=cmd_checkout)
 
     p_new = sub.add_parser("new", help="create a new branch + initial session")
     p_new.add_argument("branch")
