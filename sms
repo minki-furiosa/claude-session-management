@@ -7,6 +7,7 @@ import datetime as _dt
 import fcntl
 import json
 import os
+import shutil
 import subprocess
 import sys
 import uuid as _uuid
@@ -359,6 +360,51 @@ def cmd_checkout(args: argparse.Namespace) -> int:
     return cmd_sync(argparse.Namespace())
 
 
+def cmd_fork(args: argparse.Namespace) -> int:
+    cwd = Path.cwd()
+    parent_uuid = args.from_ or os.environ.get("CLAUDE_SESSION_ID")
+    if not parent_uuid:
+        sys.stderr.write(
+            "error: no parent session UUID. Set CLAUDE_SESSION_ID "
+            "(automatic inside Claude) or pass --from <uuid>.\n"
+        )
+        return 1
+
+    with _tree_lock(sms_root(cwd)):
+        t = Tree.load(cwd)
+        found = t.find_session(parent_uuid)
+        if found is None:
+            sys.stderr.write(f"error: session {parent_uuid} not in tree.json\n")
+            return 1
+        branch, _parent_record = found
+        new_uuid = str(_uuid.uuid4())
+
+        # Copy canonical files
+        parent_canonical = canonical_session_path(cwd, branch, parent_uuid)
+        new_canonical = canonical_session_path(cwd, branch, new_uuid)
+        if parent_canonical.exists():
+            shutil.copy2(parent_canonical, new_canonical)
+        else:
+            # Parent file missing — write an empty file so resume can extend it
+            new_canonical.parent.mkdir(parents=True, exist_ok=True)
+            new_canonical.write_text("")
+
+        parent_sub = canonical_session_subdir(cwd, branch, parent_uuid)
+        if parent_sub.is_dir():
+            new_sub = canonical_session_subdir(cwd, branch, new_uuid)
+            shutil.copytree(parent_sub, new_sub)
+
+        t.add_session(branch, new_uuid, args.name or "", parent_uuid, False)
+        t.save()
+
+    # Only symlink into current worktree if it's currently on this branch
+    if current_branch(cwd) == branch:
+        make_session_symlink(cwd, branch, new_uuid)
+
+    print(new_uuid)
+    return 0
+
+
 # -------------------------- argparse / main --------------------------------
 
 
@@ -379,6 +425,11 @@ def main(argv: list[str] | None = None) -> int:
     p_new.add_argument("--no-launch", action="store_true",
                        help="(testing) do not exec claude after setup")
     p_new.set_defaults(func=cmd_new)
+
+    p_fork = sub.add_parser("fork", help="fork the current Claude session")
+    p_fork.add_argument("--from", dest="from_", default=None, metavar="UUID")
+    p_fork.add_argument("--name", default=None)
+    p_fork.set_defaults(func=cmd_fork)
 
     p_dbg = sub.add_parser("debug-paths", help="(internal) dump resolved paths")
     p_dbg.set_defaults(func=cmd_debug_paths)
