@@ -36,9 +36,12 @@ def test_fork_copies_jsonl_and_registers(
     assert sessions[new_uuid]["is_main"] is False
     assert sessions[new_uuid]["name"] == "review-perf"
 
-    # Canonical copy
+    # Canonical copy: starts with the parent's content, plus a custom-title
+    # line appended so the /resume picker shows the fork's name.
     new_canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{new_uuid}.jsonl"
-    assert new_canonical.read_text() == '{"line":1}\n{"line":2}\n'
+    content = new_canonical.read_text()
+    assert content.startswith('{"line":1}\n{"line":2}\n')
+    assert '"customTitle": "review-perf"' in content
 
 
 def test_fork_creates_symlink_in_current_worktree(
