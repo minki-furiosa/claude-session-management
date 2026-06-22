@@ -462,6 +462,23 @@ def cmd_sessions(args: argparse.Namespace) -> int:
 
 
 
+def cmd_set_main(args: argparse.Namespace) -> int:
+    cwd = Path.cwd()
+    with _tree_lock(sms_root(cwd)):
+        t = Tree.load(cwd)
+        resolved = _resolve_uuid_prefix(t, args.target)
+        if resolved is None:
+            sys.stderr.write(f"error: no session matches '{args.target}'\n")
+            return 1
+        if resolved[0] == "__ambiguous__":
+            sys.stderr.write(f"error: ambiguous prefix '{args.target}'\n")
+            return 1
+        branch, uuid = resolved
+        t.set_main(branch, uuid)
+        t.save()
+    return 0
+
+
 def cmd_tree(args: argparse.Namespace) -> int:
     cwd = Path.cwd()
     t = Tree.load(cwd)
@@ -545,6 +562,10 @@ def main(argv: list[str] | None = None) -> int:
     p_tree.add_argument("--all", action="store_true",
                         help="include merged and backlog branches")
     p_tree.set_defaults(func=cmd_tree)
+
+    p_sm = sub.add_parser("set-main", help="mark a session as the branch's main")
+    p_sm.add_argument("target")
+    p_sm.set_defaults(func=cmd_set_main)
 
     p_dbg = sub.add_parser("debug-paths", help="(internal) dump resolved paths")
     p_dbg.set_defaults(func=cmd_debug_paths)
