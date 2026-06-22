@@ -386,26 +386,35 @@ def cmd_new(args: argparse.Namespace) -> int:
         os.execvp("claude", ["claude", "--session-id", new_uuid])
 
     if not args.no_materialize:
-        materialize_session(cwd, new_uuid)
+        materialize_session(cwd, new_uuid, name=name)
 
     print(new_uuid)
     return 0
 
 
-def materialize_session(cwd: Path, uuid: str) -> None:
+def materialize_session(cwd: Path, uuid: str, name: str = "") -> None:
     """Trigger a brief non-interactive `claude --print` so the session's jsonl
     accumulates enough real entries for Claude Code's `/resume` picker to show
     it. Without this, a freshly-created session has no on-disk content and the
     picker hides it.
 
+    Passes `--name` so the picker also shows the chosen label (Claude stores
+    this as a `custom-title` entry in the jsonl).
+
     Spawned in the background — sms returns immediately and the user can
     switch to VSCode while this finishes (typically <15 s).
     """
+    cmd = ["claude", "--session-id", uuid]
+    if name:
+        cmd += ["--name", name]
+    cmd += [
+        "--print",
+        "This session was just initialized by `sms new`/`sms session-new`. "
+        "Reply with only the word 'ok' and nothing else.",
+    ]
     try:
         subprocess.Popen(
-            ["claude", "--session-id", uuid, "--print",
-             "This session was just initialized by `sms new`/`sms session-new`. "
-             "Reply with only the word 'ok' and nothing else."],
+            cmd,
             cwd=cwd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -418,6 +427,26 @@ def materialize_session(cwd: Path, uuid: str) -> None:
             f"You may need to interact with session {uuid} once via terminal "
             f"before it appears in the picker.\n"
         )
+
+
+def write_custom_title(canonical: Path, uuid: str, title: str) -> None:
+    """Append a `custom-title` entry to the canonical jsonl so Claude's
+    /resume picker displays the chosen label.
+
+    Used by `sms fork` (and any flow that materializes a jsonl without
+    running claude). When --name is passed to `claude --print`, claude
+    writes this entry itself; here we do the equivalent by hand.
+    """
+    if not title:
+        return
+    line = json.dumps({
+        "type": "custom-title",
+        "customTitle": title,
+        "sessionId": uuid,
+    }) + "\n"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    with open(canonical, "a") as f:
+        f.write(line)
 
 
 def cmd_session_delete(args: argparse.Namespace) -> int:
@@ -517,7 +546,7 @@ def cmd_session_new(args: argparse.Namespace) -> int:
     make_session_symlink(cwd, branch, new_uuid)
 
     if not args.no_materialize:
-        materialize_session(cwd, new_uuid)
+        materialize_session(cwd, new_uuid, name=name)
 
     print(new_uuid)
     return 0
@@ -578,6 +607,10 @@ def cmd_fork(args: argparse.Namespace) -> int:
         name = args.name or _default_session_name(branch, existing)
         t.add_session(branch, new_uuid, name, parent_uuid, False)
         t.save()
+
+    # Append a custom-title to the copied jsonl so the picker shows the fork's
+    # name (not the parent's name inherited from the copy).
+    write_custom_title(new_canonical, new_uuid, name)
 
     # Make the fork visible wherever the parent is visible.
     #
