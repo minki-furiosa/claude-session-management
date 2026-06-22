@@ -35,6 +35,22 @@ def test_session_new_attaches_to_current_branch(
     assert sessions[main_uuid]["is_main"] is True
 
 
+def test_session_new_default_name_numbered(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """Without --name, sub-sessions are numbered: 'branch (2)', 'branch (3)', ..."""
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
+    r1 = run_sms(["session-new", "--no-materialize"], cwd=scratch_repo)
+    u1 = r1.stdout.strip().splitlines()[-1]
+    r2 = run_sms(["session-new", "--no-materialize"], cwd=scratch_repo)
+    u2 = r2.stdout.strip().splitlines()[-1]
+
+    t = _read_tree(scratch_repo)
+    sessions = t["branches"]["feature-x"]["sessions"]
+    assert sessions[u1]["name"] == "feature-x (2)"
+    assert sessions[u2]["name"] == "feature-x (3)"
+
+
 def test_session_new_creates_symlink(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:

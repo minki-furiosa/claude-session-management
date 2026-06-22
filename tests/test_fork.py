@@ -100,6 +100,27 @@ def test_fork_copies_subdir_if_present(
     assert new_sub.read_text() == "payload\n"
 
 
+def test_fork_default_name_numbered(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """Without --name, forks are numbered relative to existing sessions on the branch."""
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
+    t = _read_tree(scratch_repo)
+    parent_uuid = next(iter(t["branches"]["feature-x"]["sessions"]))
+    canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{parent_uuid}.jsonl"
+    canonical.write_text("{}\n")
+
+    r1 = run_sms(["fork", "--from", parent_uuid], cwd=scratch_repo)
+    u1 = r1.stdout.strip().splitlines()[-1]
+    r2 = run_sms(["fork", "--from", parent_uuid], cwd=scratch_repo)
+    u2 = r2.stdout.strip().splitlines()[-1]
+
+    t = _read_tree(scratch_repo)
+    sessions = t["branches"]["feature-x"]["sessions"]
+    assert sessions[u1]["name"] == "feature-x (2)"
+    assert sessions[u2]["name"] == "feature-x (3)"
+
+
 def test_fork_mirrors_parent_symlinks_when_branch_differs(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:

@@ -333,6 +333,18 @@ def cmd_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def _default_session_name(branch: str, existing_count: int) -> str:
+    """Generate a useful default session name when --name is not given.
+
+    First session on a branch gets the branch name verbatim. Subsequent
+    sessions are numbered: 'branch (2)', 'branch (3)', ... so they stay
+    distinguishable in the /resume picker.
+    """
+    if existing_count == 0:
+        return branch
+    return f"{branch} ({existing_count + 1})"
+
+
 def cmd_new(args: argparse.Namespace) -> int:
     cwd = Path.cwd()
 
@@ -361,7 +373,9 @@ def cmd_new(args: argparse.Namespace) -> int:
     with _tree_lock(sms_root(cwd)):
         t = Tree.load(cwd)
         t.add_branch(args.branch, parent)
-        t.add_session(args.branch, new_uuid, args.name or "", None, True)
+        # First session on the branch — default name is just the branch.
+        name = args.name or _default_session_name(args.branch, 0)
+        t.add_session(args.branch, new_uuid, name, None, True)
         t.save()
 
     (sms_root(cwd) / "sessions" / args.branch).mkdir(parents=True, exist_ok=True)
@@ -494,7 +508,9 @@ def cmd_session_new(args: argparse.Namespace) -> int:
     with _tree_lock(sms_root(cwd)):
         t = Tree.load(cwd)
         # parent_uuid=None: a fresh session attached to the branch (not derived from any sibling).
-        t.add_session(branch, new_uuid, args.name or "", None, False)
+        existing = len(t.branch(branch)["sessions"])
+        name = args.name or _default_session_name(branch, existing)
+        t.add_session(branch, new_uuid, name, None, False)
         t.save()
 
     (sms_root(cwd) / "sessions" / branch).mkdir(parents=True, exist_ok=True)
@@ -558,7 +574,9 @@ def cmd_fork(args: argparse.Namespace) -> int:
     # Tree mutation under lock — quick.
     with _tree_lock(sms_root(cwd)):
         t = Tree.load(cwd)
-        t.add_session(branch, new_uuid, args.name or "", parent_uuid, False)
+        existing = len(t.branch(branch)["sessions"])
+        name = args.name or _default_session_name(branch, existing)
+        t.add_session(branch, new_uuid, name, parent_uuid, False)
         t.save()
 
     # Make the fork visible wherever the parent is visible.

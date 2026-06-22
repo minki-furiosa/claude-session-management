@@ -135,6 +135,14 @@ def test_new_parent_is_none_on_detached_head(
     assert t["branches"]["feature-x"]["parent"] is None
 
 
+def test_new_default_name_is_branch(scratch_repo: Path, isolated_home: Path) -> None:
+    """Without --name, the first session is named after the branch."""
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
+    t = _read_tree(scratch_repo)
+    s = next(iter(t["branches"]["feature-x"]["sessions"].values()))
+    assert s["name"] == "feature-x"
+
+
 def test_new_refuses_when_branch_already_in_tree_but_not_in_git(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
