@@ -164,6 +164,83 @@ class Tree:
         return self.data["branches"].get(name)
 
 
+# -------------------------- Symlink helpers ----------------------------------
+
+
+def canonical_session_path(cwd: Path, branch: str, uuid: str) -> Path:
+    return sms_root(cwd) / "sessions" / branch / f"{uuid}.jsonl"
+
+
+def canonical_session_subdir(cwd: Path, branch: str, uuid: str) -> Path:
+    return sms_root(cwd) / "sessions" / branch / uuid
+
+
+def make_session_symlink(cwd: Path, branch: str, uuid: str) -> None:
+    canonical = canonical_session_path(cwd, branch, uuid)
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    link = claude_projects_dir(cwd) / f"{uuid}.jsonl"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink():
+        existing_target = Path(os.readlink(link))
+        if existing_target == canonical:
+            pass  # already correct
+        else:
+            link.unlink()
+            link.symlink_to(canonical)
+    elif link.exists():
+        sys.stderr.write(
+            f"error: {link} exists as a regular file; refusing to overwrite\n"
+        )
+        raise SystemExit(1)
+    else:
+        link.symlink_to(canonical)
+
+    # Subdir, if canonical has one
+    canonical_sub = canonical_session_subdir(cwd, branch, uuid)
+    if canonical_sub.is_dir():
+        sub_link = claude_projects_dir(cwd) / uuid
+        if sub_link.is_symlink():
+            if Path(os.readlink(sub_link)) != canonical_sub:
+                sub_link.unlink()
+                sub_link.symlink_to(canonical_sub, target_is_directory=True)
+        elif sub_link.exists():
+            sys.stderr.write(
+                f"warning: {sub_link} exists as a regular directory; "
+                "leaving alone\n"
+            )
+        else:
+            sub_link.symlink_to(canonical_sub, target_is_directory=True)
+
+
+def remove_session_symlink(cwd: Path, uuid: str) -> None:
+    link = claude_projects_dir(cwd) / f"{uuid}.jsonl"
+    if link.is_symlink():
+        link.unlink()
+    sub_link = claude_projects_dir(cwd) / uuid
+    if sub_link.is_symlink():
+        sub_link.unlink()
+
+
+def scan_projects_dir_for_sms_symlinks(cwd: Path) -> dict[str, Path]:
+    """Return {uuid: canonical_target} for entries that are symlinks into .git/sms/sessions/."""
+    out: dict[str, Path] = {}
+    projects = claude_projects_dir(cwd)
+    if not projects.exists():
+        return out
+    sms_sessions_prefix = str(sms_root(cwd) / "sessions") + os.sep
+    for entry in projects.iterdir():
+        if not entry.is_symlink():
+            continue
+        if not entry.name.endswith(".jsonl"):
+            continue
+        target = os.readlink(entry)
+        if not target.startswith(sms_sessions_prefix):
+            continue
+        uuid = entry.name[:-len(".jsonl")]
+        out[uuid] = Path(target)
+    return out
+
+
 # -------------------------- Subcommands ------------------------------------
 
 
@@ -202,6 +279,20 @@ def cmd_debug_tree(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_debug_symlink(args: argparse.Namespace) -> int:
+    cwd = Path.cwd()
+    if args.sym_sub == "make":
+        make_session_symlink(cwd, args.branch, args.uuid)
+    elif args.sym_sub == "remove":
+        remove_session_symlink(cwd, args.uuid)
+    elif args.sym_sub == "scan":
+        for uuid, target in scan_projects_dir_for_sms_symlinks(cwd).items():
+            print(f"{uuid}={target}")
+    else:
+        return 2
+    return 0
+
+
 # -------------------------- argparse / main --------------------------------
 
 
@@ -225,6 +316,15 @@ def main(argv: list[str] | None = None) -> int:
     p_ss = p_dt_sub.add_parser("set-state")
     p_ss.add_argument("branch"); p_ss.add_argument("state", choices=["active", "merged", "backlog"])
     p_dt.set_defaults(func=cmd_debug_tree)
+
+    p_ds = sub.add_parser("debug-symlink", help="(internal) symlink operations")
+    p_ds_sub = p_ds.add_subparsers(dest="sym_sub", required=True)
+    p_ds_make = p_ds_sub.add_parser("make")
+    p_ds_make.add_argument("branch"); p_ds_make.add_argument("uuid")
+    p_ds_rm = p_ds_sub.add_parser("remove")
+    p_ds_rm.add_argument("uuid")
+    p_ds_sub.add_parser("scan")
+    p_ds.set_defaults(func=cmd_debug_symlink)
 
     args = parser.parse_args(argv)
     return args.func(args)

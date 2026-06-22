@@ -1,0 +1,91 @@
+"""Tests for symlink create/remove/scan."""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from .conftest import run_sms
+
+
+def _canonical(repo: Path, branch: str, uuid: str) -> Path:
+    return repo / ".git" / "sms" / "sessions" / branch / f"{uuid}.jsonl"
+
+
+def _projects_link(home: Path, cwd: Path, uuid: str) -> Path:
+    h = str(cwd.resolve()).replace("/", "-")
+    return home / ".claude" / "projects" / h / f"{uuid}.jsonl"
+
+
+def test_make_symlink_creates_dangling_link(scratch_repo: Path, isolated_home: Path) -> None:
+    uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    result = run_sms(
+        ["debug-symlink", "make", "feature-x", uuid], cwd=scratch_repo,
+    )
+    assert result.returncode == 0, result.stderr
+    link = _projects_link(isolated_home, scratch_repo, uuid)
+    assert link.is_symlink()
+    assert os.readlink(link) == str(_canonical(scratch_repo, "feature-x", uuid))
+
+
+def test_make_symlink_idempotent(scratch_repo: Path, isolated_home: Path) -> None:
+    uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    for _ in range(3):
+        result = run_sms(
+            ["debug-symlink", "make", "feature-x", uuid], cwd=scratch_repo,
+        )
+        assert result.returncode == 0, result.stderr
+
+
+def test_make_symlink_refuses_to_overwrite_regular_file(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    link = _projects_link(isolated_home, scratch_repo, uuid)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.write_text("real file, not a symlink\n")
+
+    result = run_sms(
+        ["debug-symlink", "make", "feature-x", uuid], cwd=scratch_repo,
+    )
+    assert result.returncode == 1
+    assert link.read_text() == "real file, not a symlink\n"
+    assert not link.is_symlink()
+
+
+def test_remove_symlink(scratch_repo: Path, isolated_home: Path) -> None:
+    uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    run_sms(["debug-symlink", "make", "feature-x", uuid], cwd=scratch_repo)
+    result = run_sms(["debug-symlink", "remove", uuid], cwd=scratch_repo)
+    assert result.returncode == 0, result.stderr
+    assert not _projects_link(isolated_home, scratch_repo, uuid).exists()
+
+
+def test_remove_does_not_touch_regular_file(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    link = _projects_link(isolated_home, scratch_repo, uuid)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.write_text("not a symlink\n")
+    result = run_sms(["debug-symlink", "remove", uuid], cwd=scratch_repo)
+    assert result.returncode == 0
+    assert link.exists() and not link.is_symlink()
+    assert link.read_text() == "not a symlink\n"
+
+
+def test_scan_returns_only_sms_symlinks(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    sms_uuid = "11111111-1111-1111-1111-111111111111"
+    other_uuid = "22222222-2222-2222-2222-222222222222"
+    run_sms(["debug-symlink", "make", "feature-x", sms_uuid], cwd=scratch_repo)
+    # Drop a non-sms file in the same projects dir
+    plain = _projects_link(isolated_home, scratch_repo, other_uuid)
+    plain.parent.mkdir(parents=True, exist_ok=True)
+    plain.write_text("not a sms session\n")
+
+    result = run_sms(["debug-symlink", "scan"], cwd=scratch_repo)
+    assert result.returncode == 0, result.stderr
+    seen = dict(line.split("=", 1) for line in result.stdout.strip().splitlines() if line)
+    assert sms_uuid in seen
+    assert other_uuid not in seen
