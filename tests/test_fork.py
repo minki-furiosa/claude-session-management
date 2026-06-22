@@ -100,6 +100,36 @@ def test_fork_copies_subdir_if_present(
     assert new_sub.read_text() == "payload\n"
 
 
+def test_fork_mirrors_parent_symlinks_when_branch_differs(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """When the current worktree's branch differs from the session's branch,
+    fork still drops a symlink in every projects dir that has the parent's
+    symlink — keeping the fork visible in the picker the user is using."""
+    import subprocess
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
+    t = _read_tree(scratch_repo)
+    parent_uuid = next(iter(t["branches"]["feature-x"]["sessions"]))
+    canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{parent_uuid}.jsonl"
+    canonical.write_text("{}\n")
+
+    # Switch the worktree to a different branch (without symlink cleanup —
+    # mirrors the real-life case where the user did plain `git checkout`).
+    subprocess.run(["git", "checkout", "main"], cwd=scratch_repo,
+                   check=True, capture_output=True)
+
+    # Confirm parent symlink is still in projects dir (left over from sms new).
+    cwd_hash = str(scratch_repo.resolve()).replace("/", "-")
+    pd = isolated_home / ".claude" / "projects" / cwd_hash
+    assert (pd / f"{parent_uuid}.jsonl").is_symlink()
+
+    # Fork. The worktree is now on `main`, not `feature-x`, but the fork's
+    # symlink should still appear in this projects dir (mirroring parent).
+    result = run_sms(["fork", "--from", parent_uuid], cwd=scratch_repo)
+    new_uuid = result.stdout.strip().splitlines()[-1]
+    assert (pd / f"{new_uuid}.jsonl").is_symlink()
+
+
 def test_fork_errors_without_parent_uuid_source(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:

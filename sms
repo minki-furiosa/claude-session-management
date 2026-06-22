@@ -561,8 +561,40 @@ def cmd_fork(args: argparse.Namespace) -> int:
         t.add_session(branch, new_uuid, args.name or "", parent_uuid, False)
         t.save()
 
-    # Only symlink into current worktree if it's currently on this branch
-    if current_branch(cwd) == branch:
+    # Make the fork visible wherever the parent is visible.
+    #
+    # Mirror the parent's existing symlinks: for every projects dir that has
+    # a symlink to the parent's canonical jsonl, drop a matching symlink for
+    # the new uuid. This handles the common case where the user runs
+    # `/sms-fork` from inside the parent session but the worktree's current
+    # git branch isn't the session's branch — without this, the fork would
+    # be orphaned (no symlink anywhere, invisible to the /resume picker).
+    parent_canonical = canonical_session_path(cwd, branch, parent_uuid)
+    new_canonical_str = str(canonical_session_path(cwd, branch, new_uuid))
+    projects_root = home_dir() / ".claude" / "projects"
+    mirrored = False
+    if projects_root.is_dir():
+        for pd in projects_root.iterdir():
+            if not pd.is_dir():
+                continue
+            parent_link = pd / f"{parent_uuid}.jsonl"
+            if not parent_link.is_symlink():
+                continue
+            raw = os.readlink(parent_link)
+            target = Path(raw)
+            if not target.is_absolute():
+                target = (parent_link.parent / target).resolve()
+            if str(target) != str(parent_canonical):
+                continue
+            new_link = pd / f"{new_uuid}.jsonl"
+            if new_link.exists() or new_link.is_symlink():
+                continue
+            new_link.symlink_to(new_canonical_str)
+            mirrored = True
+
+    # If we couldn't mirror anywhere (parent has no symlinks), fall back to
+    # creating one in the current worktree if its branch matches.
+    if not mirrored and current_branch_or_none(cwd) == branch:
         make_session_symlink(cwd, branch, new_uuid)
 
     print(new_uuid)
