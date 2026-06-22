@@ -3,7 +3,7 @@
 Branch-scoped session management for Claude Code. Makes Claude sessions follow
 the **branch** they belong to, not the **worktree** they were created in.
 
-Design spec: `docs/superpowers/specs/2026-06-22-sms-branch-scoped-sessions-design.md`
+See [CHEATSHEET.md](CHEATSHEET.md) for a one-page command reference.
 
 ---
 
