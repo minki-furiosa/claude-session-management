@@ -444,6 +444,23 @@ def cmd_resume(args: argparse.Namespace) -> int:
     os.execvp("claude", ["claude", "--resume", uuid])
 
 
+def cmd_sessions(args: argparse.Namespace) -> int:
+    cwd = Path.cwd()
+    branch = args.branch or current_branch(cwd)
+    t = Tree.load(cwd)
+    b = t.branch(branch)
+    if b is None:
+        sys.stderr.write(f"error: branch '{branch}' not in tree.json\n")
+        return 1
+    for uuid, s in sorted(b["sessions"].items(), key=lambda kv: kv[1].get("created_at", "")):
+        prefix = "*" if s.get("is_main") else " "
+        short = uuid[:8]
+        name = s.get("name", "")
+        created = s.get("created_at", "")
+        print(f"{prefix} {short} {created} {name}")
+    return 0
+
+
 # -------------------------- argparse / main --------------------------------
 
 
@@ -468,12 +485,18 @@ def main(argv: list[str] | None = None) -> int:
     p_fork = sub.add_parser("fork", help="fork the current Claude session")
     p_fork.add_argument("--from", dest="from_", default=None, metavar="UUID")
     p_fork.add_argument("--name", default=None)
+    p_fork.add_argument("--no-launch", action="store_true",
+                       help="(testing) do not exec claude after setup")
     p_fork.set_defaults(func=cmd_fork)
 
     p_res = sub.add_parser("resume", help="(fallback) resume a session from terminal")
     p_res.add_argument("target", help="UUID or unique prefix")
     p_res.add_argument("--no-launch", action="store_true")
     p_res.set_defaults(func=cmd_resume)
+
+    p_ses = sub.add_parser("sessions", help="list sessions for a branch")
+    p_ses.add_argument("--branch", default=None)
+    p_ses.set_defaults(func=cmd_sessions)
 
     p_dbg = sub.add_parser("debug-paths", help="(internal) dump resolved paths")
     p_dbg.set_defaults(func=cmd_debug_paths)
