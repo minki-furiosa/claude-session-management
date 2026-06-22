@@ -7,4 +7,4 @@ Read any name/label the user passed (free text). Then run via the Bash tool:
 
   sms fork --name "<label-or-empty>"
 
-If the user did not provide a label, omit `--name`. The command reads `$CLAUDE_SESSION_ID` automatically to know which session to fork from. Print the new UUID it emits and tell the user it should now be available in the `/resume` picker.
+If the user did not provide a label, omit `--name`. The command reads `$CLAUDE_CODE_SESSION_ID` (set automatically by Claude Code) to know which session to fork from. Print the new UUID it emits and tell the user it should now be available in the `/resume` picker.

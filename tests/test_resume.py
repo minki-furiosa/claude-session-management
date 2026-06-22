@@ -13,7 +13,7 @@ def _read_tree(repo: Path) -> dict:
 
 
 def test_resume_resolves_by_prefix(scratch_repo: Path, isolated_home: Path) -> None:
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     uuid = next(iter(_read_tree(scratch_repo)["branches"]["feature-x"]["sessions"]))
     prefix = uuid[:8]
     result = run_sms(["resume", prefix, "--no-launch"], cwd=scratch_repo)
@@ -25,7 +25,7 @@ def test_resume_errors_on_ambiguous_prefix(scratch_repo: Path, isolated_home: Pa
     """Two sessions sharing a UUID prefix → resume by that prefix is ambiguous."""
     # Create branch + first session via `new`, then inject a second session
     # with a deterministically-shared UUID prefix via debug-tree.
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = _read_tree(scratch_repo)
     first = next(iter(t["branches"]["feature-x"]["sessions"]))
     second = first[:8] + "-0000-0000-0000-000000000000"
@@ -47,7 +47,7 @@ def test_resume_errors_on_unknown_uuid(scratch_repo: Path, isolated_home: Path) 
 def test_resume_errors_when_branch_not_in_current_worktree(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     uuid = next(iter(_read_tree(scratch_repo)["branches"]["feature-x"]["sessions"]))
     subprocess.run(["git", "checkout", "main"], cwd=scratch_repo,
                    check=True, capture_output=True)

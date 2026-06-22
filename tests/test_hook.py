@@ -10,7 +10,7 @@ from .conftest import run_sms
 def test_hook_emits_context_for_sms_branch(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     result = run_sms(["hook", "session-start"], cwd=scratch_repo)
     assert result.returncode == 0, result.stderr
     out = result.stdout
@@ -29,7 +29,7 @@ def test_hook_silent_for_non_sms_branch(
 
 
 def test_hook_includes_sibling_count(scratch_repo: Path, isolated_home: Path) -> None:
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = json.loads((scratch_repo / ".git" / "sms" / "tree.json").read_text())
     parent = next(iter(t["branches"]["feature-x"]["sessions"]))
     (scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{parent}.jsonl").write_text("{}\n")
@@ -41,7 +41,7 @@ def test_hook_includes_sibling_count(scratch_repo: Path, isolated_home: Path) ->
 
 def test_hook_with_cwd_argument(scratch_repo: Path, isolated_home: Path) -> None:
     """The --cwd option lets the hook resolve from a path that isn't current cwd."""
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     # Run sms hook from a different cwd, with --cwd pointing at scratch_repo
     result = run_sms(["hook", "session-start", "--cwd", str(scratch_repo)],
                      cwd=isolated_home)

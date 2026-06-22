@@ -22,7 +22,7 @@ def test_sync_creates_missing_symlinks_for_current_branch(
 ) -> None:
     """Branch was checked out manually in worktree B; sms sync populates the symlinks."""
     # 1. In main worktree A, create feature-x with a session
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = json.loads((scratch_repo / ".git" / "sms" / "tree.json").read_text())
     uuid = next(iter(t["branches"]["feature-x"]["sessions"]))
 
@@ -56,14 +56,14 @@ def test_sync_removes_stale_symlinks_pointing_to_other_branches(
 ) -> None:
     """If projects dir has a symlink pointing to branch B but current branch is A, remove it."""
     # Create feature-x and feature-y, with a session on each
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = json.loads((scratch_repo / ".git" / "sms" / "tree.json").read_text())
     x_uuid = next(iter(t["branches"]["feature-x"]["sessions"]))
 
     # Back to main, then create feature-y
     subprocess.run(["git", "checkout", "main"], cwd=scratch_repo,
                    check=True, capture_output=True)
-    run_sms(["new", "feature-y", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-y", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = json.loads((scratch_repo / ".git" / "sms" / "tree.json").read_text())
     y_uuid = next(iter(t["branches"]["feature-y"]["sessions"]))
 
@@ -87,7 +87,7 @@ def test_sync_removes_stale_symlinks_pointing_to_other_branches(
 
 
 def test_sync_is_idempotent(scratch_repo: Path, isolated_home: Path) -> None:
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     # Capture state
     pd = _projects(isolated_home, scratch_repo)
     before = sorted((p.name, os.readlink(p)) for p in pd.iterdir() if p.is_symlink())

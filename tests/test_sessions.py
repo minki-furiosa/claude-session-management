@@ -9,7 +9,7 @@ from .conftest import run_sms
 
 
 def test_sessions_lists_main_and_subs(scratch_repo: Path, isolated_home: Path) -> None:
-    run_sms(["new", "feature-x", "--name", "main label", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--name", "main label", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = json.loads((scratch_repo / ".git" / "sms" / "tree.json").read_text())
     parent = next(iter(t["branches"]["feature-x"]["sessions"]))
     (scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{parent}.jsonl").write_text("{}\n")
@@ -28,7 +28,7 @@ def test_sessions_lists_main_and_subs(scratch_repo: Path, isolated_home: Path) -
 
 
 def test_sessions_branch_override(scratch_repo: Path, isolated_home: Path) -> None:
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     import subprocess
     subprocess.run(["git", "checkout", "main"], cwd=scratch_repo,
                    check=True, capture_output=True)

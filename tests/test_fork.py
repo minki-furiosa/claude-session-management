@@ -15,7 +15,7 @@ def _read_tree(repo: Path) -> dict:
 def test_fork_copies_jsonl_and_registers(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = _read_tree(scratch_repo)
     parent_uuid = next(iter(t["branches"]["feature-x"]["sessions"]))
 
@@ -44,7 +44,7 @@ def test_fork_copies_jsonl_and_registers(
 def test_fork_creates_symlink_in_current_worktree(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = _read_tree(scratch_repo)
     parent_uuid = next(iter(t["branches"]["feature-x"]["sessions"]))
 
@@ -63,7 +63,7 @@ def test_fork_creates_symlink_in_current_worktree(
 def test_fork_uses_claude_session_id_env(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = _read_tree(scratch_repo)
     parent_uuid = next(iter(t["branches"]["feature-x"]["sessions"]))
 
@@ -73,7 +73,7 @@ def test_fork_uses_claude_session_id_env(
     result = run_sms(
         ["fork", "--name", "from-env"],
         cwd=scratch_repo,
-        env_extra={"CLAUDE_SESSION_ID": parent_uuid},
+        env_extra={"CLAUDE_CODE_SESSION_ID": parent_uuid},
     )
     assert result.returncode == 0, result.stderr
     new_uuid = result.stdout.strip().splitlines()[-1]
@@ -84,7 +84,7 @@ def test_fork_uses_claude_session_id_env(
 def test_fork_copies_subdir_if_present(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = _read_tree(scratch_repo)
     parent_uuid = next(iter(t["branches"]["feature-x"]["sessions"]))
 
@@ -103,7 +103,7 @@ def test_fork_copies_subdir_if_present(
 def test_fork_errors_without_parent_uuid_source(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
-    """No --from and no CLAUDE_SESSION_ID env → error."""
+    """No --from and no CLAUDE_CODE_SESSION_ID env → error."""
     result = run_sms(["fork", "--name", "x"], cwd=scratch_repo)
     assert result.returncode != 0
-    assert "CLAUDE_SESSION_ID" in result.stderr or "--from" in result.stderr
+    assert "CLAUDE_CODE_SESSION_ID" in result.stderr or "--from" in result.stderr

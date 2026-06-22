@@ -16,7 +16,7 @@ def _read_tree(repo: Path) -> dict:
 def test_new_branch_creates_branch_and_tree_entry(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
-    result = run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    result = run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     assert result.returncode == 0, result.stderr
 
     # git branch switched
@@ -38,7 +38,7 @@ def test_new_session_is_main_and_has_label(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
     result = run_sms(
-        ["new", "feature-x", "--name", "initial draft", "--no-launch"],
+        ["new", "feature-x", "--name", "initial draft", "--no-launch", "--no-materialize"],
         cwd=scratch_repo,
     )
     assert result.returncode == 0, result.stderr
@@ -53,7 +53,7 @@ def test_new_session_is_main_and_has_label(
 def test_new_creates_symlink_in_projects_dir(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
-    result = run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    result = run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     assert result.returncode == 0, result.stderr
     t = _read_tree(scratch_repo)
     uuid = next(iter(t["branches"]["feature-x"]["sessions"]))
@@ -68,7 +68,7 @@ def test_new_creates_symlink_in_projects_dir(
 
 
 def test_new_prints_uuid_with_no_launch(scratch_repo: Path, isolated_home: Path) -> None:
-    result = run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    result = run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     assert result.returncode == 0, result.stderr
     # stdout contains the UUID
     t = _read_tree(scratch_repo)
@@ -76,35 +76,19 @@ def test_new_prints_uuid_with_no_launch(scratch_repo: Path, isolated_home: Path)
     assert uuid in result.stdout
 
 
-def test_new_seeds_jsonl_so_session_visible_in_picker(
-    scratch_repo: Path, isolated_home: Path,
-) -> None:
-    """The canonical jsonl must exist with at least one valid entry so the picker shows it."""
-    import json
-    result = run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
-    assert result.returncode == 0, result.stderr
-    t = _read_tree(scratch_repo)
-    uuid = next(iter(t["branches"]["feature-x"]["sessions"]))
-    canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{uuid}.jsonl"
-    assert canonical.exists()
-    lines = canonical.read_text().splitlines()
-    assert lines, "expected at least one seed line"
-    entry = json.loads(lines[0])
-    assert entry["sessionId"] == uuid
-    assert entry["type"] == "queue-operation"
-
-
 def test_new_no_launch_default(scratch_repo: Path, isolated_home: Path) -> None:
-    """Without --launch the command returns cleanly (does NOT exec claude)."""
-    result = run_sms(["new", "feature-x"], cwd=scratch_repo)
+    """Without --launch the command returns cleanly (does NOT exec claude).
+    Materialize is skipped here so the test doesn't shell out to claude.
+    """
+    result = run_sms(["new", "feature-x", "--no-materialize"], cwd=scratch_repo)
     assert result.returncode == 0, result.stderr
 
 
 def test_new_refuses_duplicate_branch(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
-    result = run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
+    result = run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     assert result.returncode != 0
     # git's own error or our own — either works, as long as it fails
     assert "feature-x" in (result.stderr + result.stdout)
@@ -119,7 +103,7 @@ def test_new_parent_is_none_when_current_branch_not_in_sms_tree(
         ["git", "checkout", "-b", "feature-base"],
         cwd=scratch_repo, check=True, capture_output=True,
     )
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = _read_tree(scratch_repo)
     assert t["branches"]["feature-x"]["parent"] is None
 
@@ -128,9 +112,9 @@ def test_new_parent_set_when_current_branch_is_in_sms_tree(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
     """If the current branch IS sms-tracked, parent is captured for the new branch."""
-    run_sms(["new", "feature-a", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-a", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     # Now on feature-a, which is in sms tree.
-    run_sms(["new", "feature-b", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-b", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = _read_tree(scratch_repo)
     assert t["branches"]["feature-b"]["parent"] == "feature-a"
 
@@ -145,7 +129,7 @@ def test_new_parent_is_none_on_detached_head(
     subprocess.run(
         ["git", "checkout", head], cwd=scratch_repo, check=True, capture_output=True,
     )
-    result = run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    result = run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     assert result.returncode == 0, result.stderr
     t = _read_tree(scratch_repo)
     assert t["branches"]["feature-x"]["parent"] is None
@@ -155,12 +139,12 @@ def test_new_refuses_when_branch_already_in_tree_but_not_in_git(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
     """If tree.json has a branch but git doesn't, sms new should refuse before touching git."""
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     # Delete the git branch
     subprocess.run(["git", "checkout", "main"], cwd=scratch_repo, check=True, capture_output=True)
     subprocess.run(["git", "branch", "-D", "feature-x"], cwd=scratch_repo, check=True, capture_output=True)
     # tree.json still has feature-x
-    result = run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    result = run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     assert result.returncode != 0
     assert "tree.json" in result.stderr.lower()
     # Verify git was NOT touched (still on main)

@@ -8,7 +8,7 @@ from .conftest import run_sms
 
 
 def test_set_main_flips_flags(scratch_repo: Path, isolated_home: Path) -> None:
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = json.loads((scratch_repo / ".git" / "sms" / "tree.json").read_text())
     parent = next(iter(t["branches"]["feature-x"]["sessions"]))
     (scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{parent}.jsonl").write_text("{}\n")
@@ -24,7 +24,7 @@ def test_set_main_flips_flags(scratch_repo: Path, isolated_home: Path) -> None:
 
 
 def test_set_main_prefix(scratch_repo: Path, isolated_home: Path) -> None:
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = json.loads((scratch_repo / ".git" / "sms" / "tree.json").read_text())
     uuid = next(iter(t["branches"]["feature-x"]["sessions"]))
     assert run_sms(["set-main", uuid[:8]], cwd=scratch_repo).returncode == 0

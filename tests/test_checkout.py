@@ -16,7 +16,7 @@ def test_checkout_switches_branch_and_syncs_symlinks(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
     # Create feature-x, switch to main, then check it out via sms
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = json.loads((scratch_repo / ".git" / "sms" / "tree.json").read_text())
     x_uuid = next(iter(t["branches"]["feature-x"]["sessions"]))
 
@@ -43,7 +43,7 @@ def test_checkout_switches_branch_and_syncs_symlinks(
 def test_checkout_fails_if_branch_taken_by_another_worktree(
     scratch_repo: Path, isolated_home: Path, tmp_path: Path,
 ) -> None:
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     # Create a second worktree on main before checking out feature-x in main worktree
     wt = tmp_path / "wt"
     subprocess.run(["git", "worktree", "add", str(wt), "main"],

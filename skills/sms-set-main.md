@@ -5,6 +5,6 @@ description: Mark the current Claude session as the branch's main session (repla
 
 Run via the Bash tool:
 
-  sms set-main "$CLAUDE_SESSION_ID"
+  sms set-main "$CLAUDE_CODE_SESSION_ID"
 
 Report the result.

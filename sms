@@ -365,34 +365,114 @@ def cmd_new(args: argparse.Namespace) -> int:
         t.save()
 
     (sms_root(cwd) / "sessions" / args.branch).mkdir(parents=True, exist_ok=True)
-    seed_session_jsonl(canonical_session_path(cwd, args.branch, new_uuid), new_uuid)
     make_session_symlink(cwd, args.branch, new_uuid)
 
-    print(new_uuid)
     if args.launch:
+        print(new_uuid)
         os.execvp("claude", ["claude", "--session-id", new_uuid])
+
+    if not args.no_materialize:
+        materialize_session(cwd, new_uuid)
+
+    print(new_uuid)
     return 0
 
 
-def seed_session_jsonl(path: Path, uuid: str) -> None:
-    """Write a minimal valid jsonl line so the new session is visible in Claude's /resume picker.
+def materialize_session(cwd: Path, uuid: str) -> None:
+    """Trigger a brief non-interactive `claude --print` so the session's jsonl
+    accumulates enough real entries for Claude Code's `/resume` picker to show
+    it. Without this, a freshly-created session has no on-disk content and the
+    picker hides it.
 
-    Without this, an empty session has no on-disk jsonl until Claude is launched and
-    a first message is sent — which means the picker doesn't show it.
-
-    The single line below mirrors the very first entry every real session has on disk
-    (a queue-operation/enqueue with the sessionId). Claude appends subsequent entries
-    when it next opens the session.
+    Spawned in the background — sms returns immediately and the user can
+    switch to VSCode while this finishes (typically <15 s).
     """
-    iso = _iso_now()
-    line = json.dumps({
-        "type": "queue-operation",
-        "operation": "enqueue",
-        "timestamp": iso,
-        "sessionId": uuid,
-    }) + "\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(line)
+    try:
+        subprocess.Popen(
+            ["claude", "--session-id", uuid, "--print",
+             "This session was just initialized by `sms new`/`sms session-new`. "
+             "Reply with only the word 'ok' and nothing else."],
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as e:
+        sys.stderr.write(
+            f"warning: failed to spawn `claude --print` for materialization: {e}\n"
+            f"You may need to interact with session {uuid} once via terminal "
+            f"before it appears in the picker.\n"
+        )
+
+
+def cmd_session_delete(args: argparse.Namespace) -> int:
+    """Delete a session entirely: canonical files, symlinks in all worktrees,
+    file-history/session-env caches, and the tree.json entry.
+
+    Refuses to delete the currently-running Claude session (the one this
+    process was invoked from) — start another session first.
+    """
+    cwd = Path.cwd()
+    t = Tree.load(cwd)
+    resolved = _resolve_uuid_prefix(t, args.target)
+    if resolved is None:
+        sys.stderr.write(f"error: no session matches '{args.target}'\n")
+        return 1
+    if resolved[0] == "__ambiguous__":
+        sys.stderr.write(f"error: ambiguous prefix '{args.target}'\n")
+        return 1
+    branch, uuid = resolved
+
+    current = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID")
+    if current == uuid:
+        sys.stderr.write(
+            f"error: refusing to delete the currently-running session ({uuid}). "
+            f"Start another session first, then delete this one from there.\n"
+        )
+        return 1
+
+    # 1. Canonical jsonl + subdir
+    canonical = canonical_session_path(cwd, branch, uuid)
+    if canonical.is_symlink() or canonical.exists():
+        canonical.unlink()
+    canonical_sub = canonical_session_subdir(cwd, branch, uuid)
+    if canonical_sub.is_dir() and not canonical_sub.is_symlink():
+        shutil.rmtree(canonical_sub)
+    elif canonical_sub.is_symlink():
+        canonical_sub.unlink()
+
+    # 2. Symlinks in any worktree's projects dir
+    projects_root = home_dir() / ".claude" / "projects"
+    if projects_root.is_dir():
+        for pd in projects_root.iterdir():
+            if not pd.is_dir():
+                continue
+            for name in (f"{uuid}.jsonl", uuid):
+                p = pd / name
+                if p.is_symlink():
+                    p.unlink()
+
+    # 3. UUID-keyed caches outside projects/
+    for path in (
+        home_dir() / ".claude" / "file-history" / uuid,
+        home_dir() / ".claude" / "session-env" / uuid,
+    ):
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists() or path.is_symlink():
+            path.unlink()
+
+    # 4. tree.json entry
+    with _tree_lock(sms_root(cwd)):
+        t = Tree.load(cwd)
+        b = t.branch(branch)
+        if b is not None and uuid in b["sessions"]:
+            del b["sessions"][uuid]
+            t.save()
+
+    print(f"deleted session {uuid} (was on branch {branch})")
+    return 0
 
 
 def cmd_session_new(args: argparse.Namespace) -> int:
@@ -418,8 +498,10 @@ def cmd_session_new(args: argparse.Namespace) -> int:
         t.save()
 
     (sms_root(cwd) / "sessions" / branch).mkdir(parents=True, exist_ok=True)
-    seed_session_jsonl(canonical_session_path(cwd, branch, new_uuid), new_uuid)
     make_session_symlink(cwd, branch, new_uuid)
+
+    if not args.no_materialize:
+        materialize_session(cwd, new_uuid)
 
     print(new_uuid)
     return 0
@@ -438,10 +520,14 @@ def cmd_checkout(args: argparse.Namespace) -> int:
 
 def cmd_fork(args: argparse.Namespace) -> int:
     cwd = Path.cwd()
-    parent_uuid = args.from_ or os.environ.get("CLAUDE_SESSION_ID")
+    parent_uuid = (
+        args.from_
+        or os.environ.get("CLAUDE_CODE_SESSION_ID")  # set by claude-code (VSCode extension + CLI)
+        or os.environ.get("CLAUDE_SESSION_ID")        # older / alternate naming, kept as fallback
+    )
     if not parent_uuid:
         sys.stderr.write(
-            "error: no parent session UUID. Set CLAUDE_SESSION_ID "
+            "error: no parent session UUID. Set CLAUDE_CODE_SESSION_ID "
             "(automatic inside Claude) or pass --from <uuid>.\n"
         )
         return 1
@@ -684,12 +770,22 @@ def main(argv: list[str] | None = None) -> int:
                        help="exec `claude` after setup (default: just print UUID; open in VSCode picker)")
     p_new.add_argument("--no-launch", action="store_true",
                        help=argparse.SUPPRESS)  # back-compat no-op (default is now no-launch)
+    p_new.add_argument("--no-materialize", action="store_true",
+                       help="skip the background `claude --print` that makes the session "
+                            "visible in the picker (faster, but session may be hidden)")
     p_new.set_defaults(func=cmd_new)
 
     p_sn = sub.add_parser("session-new",
                           help="add a new blank session to the current sms-tracked branch")
     p_sn.add_argument("--name", default=None)
+    p_sn.add_argument("--no-materialize", action="store_true",
+                       help="skip the background `claude --print` materialize step")
     p_sn.set_defaults(func=cmd_session_new)
+
+    p_sd = sub.add_parser("session-delete",
+                          help="delete a session entirely (canonical + symlinks + tree entry)")
+    p_sd.add_argument("target", help="UUID or unique prefix")
+    p_sd.set_defaults(func=cmd_session_delete)
 
     p_fork = sub.add_parser("fork", help="fork the current Claude session")
     p_fork.add_argument("--from", dest="from_", default=None, metavar="UUID")

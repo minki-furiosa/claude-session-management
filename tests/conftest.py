@@ -36,8 +36,15 @@ def scratch_repo(tmp_path: Path) -> Path:
 
 
 def run_sms(args: list[str], cwd: Path, env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    """Invoke the sms CLI in a subprocess and return the result."""
+    """Invoke the sms CLI in a subprocess and return the result.
+
+    By default, strips CLAUDE_CODE_SESSION_ID / CLAUDE_SESSION_ID from the env
+    so that tests don't accidentally inherit the controlling session's UUID.
+    Tests that want a specific session UUID pass it explicitly via env_extra.
+    """
     env = os.environ.copy()
+    env.pop("CLAUDE_CODE_SESSION_ID", None)
+    env.pop("CLAUDE_SESSION_ID", None)
     if env_extra:
         env.update(env_extra)
     return subprocess.run(

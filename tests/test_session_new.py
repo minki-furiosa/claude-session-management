@@ -17,11 +17,11 @@ def test_session_new_attaches_to_current_branch(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
     """session-new adds a sub session to the current sms-tracked branch."""
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
     t = _read_tree(scratch_repo)
     main_uuid = next(iter(t["branches"]["feature-x"]["sessions"]))
 
-    result = run_sms(["session-new", "--name", "blank work"], cwd=scratch_repo)
+    result = run_sms(["session-new", "--name", "blank work", "--no-materialize"], cwd=scratch_repo)
     assert result.returncode == 0, result.stderr
     new_uuid = result.stdout.strip().splitlines()[-1]
 
@@ -35,28 +35,25 @@ def test_session_new_attaches_to_current_branch(
     assert sessions[main_uuid]["is_main"] is True
 
 
-def test_session_new_creates_symlink_and_seeded_jsonl(
+def test_session_new_creates_symlink(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
-    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
-    result = run_sms(["session-new"], cwd=scratch_repo)
+    """session-new creates a (dangling) symlink in the projects dir. Materialize is
+    skipped — the canonical file is created by claude when the session is opened."""
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
+    result = run_sms(["session-new", "--no-materialize"], cwd=scratch_repo)
     new_uuid = result.stdout.strip().splitlines()[-1]
 
     cwd_hash = str(scratch_repo.resolve()).replace("/", "-")
     link = isolated_home / ".claude" / "projects" / cwd_hash / f"{new_uuid}.jsonl"
     assert link.is_symlink()
 
-    canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{new_uuid}.jsonl"
-    assert canonical.exists()
-    entry = json.loads(canonical.read_text().splitlines()[0])
-    assert entry["sessionId"] == new_uuid
-
 
 def test_session_new_refuses_on_untracked_branch(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
     """Branch must be sms-tracked. Plain main isn't, so error."""
-    result = run_sms(["session-new"], cwd=scratch_repo)
+    result = run_sms(["session-new", "--no-materialize"], cwd=scratch_repo)
     assert result.returncode != 0
     assert "not sms-tracked" in result.stderr.lower() or "sms new" in result.stderr.lower()
 
@@ -70,6 +67,6 @@ def test_session_new_refuses_on_detached_head(
     subprocess.run(
         ["git", "checkout", head], cwd=scratch_repo, check=True, capture_output=True,
     )
-    result = run_sms(["session-new"], cwd=scratch_repo)
+    result = run_sms(["session-new", "--no-materialize"], cwd=scratch_repo)
     assert result.returncode != 0
     assert "detached" in result.stderr.lower()
