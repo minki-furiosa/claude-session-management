@@ -294,6 +294,34 @@ def cmd_debug_symlink(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sync(args: argparse.Namespace) -> int:
+    cwd = Path.cwd()
+    branch = current_branch(cwd)
+    t = Tree.load(cwd)
+
+    desired_uuids: set[str] = set()
+    b = t.branch(branch)
+    if b is not None:
+        desired_uuids = set(b["sessions"].keys())
+
+    existing = scan_projects_dir_for_sms_symlinks(cwd)
+    existing_uuids = set(existing.keys())
+
+    sessions_root = str(sms_root(cwd) / "sessions") + os.sep
+    branch_prefix = str(sms_root(cwd) / "sessions" / branch) + os.sep
+    to_remove = {
+        u for u in existing_uuids
+        if not str(existing[u]).startswith(branch_prefix)
+    }
+    to_create = desired_uuids - existing_uuids
+
+    for u in sorted(to_remove):
+        remove_session_symlink(cwd, u)
+    for u in sorted(to_create):
+        make_session_symlink(cwd, branch, u)
+    return 0
+
+
 def cmd_new(args: argparse.Namespace) -> int:
     cwd = Path.cwd()
     parent = current_branch(cwd)
@@ -326,6 +354,9 @@ def cmd_new(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sms")
     sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_sync = sub.add_parser("sync", help="rebuild symlinks to match current branch")
+    p_sync.set_defaults(func=cmd_sync)
 
     p_new = sub.add_parser("new", help="create a new branch + initial session")
     p_new.add_argument("branch")
