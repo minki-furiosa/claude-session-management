@@ -235,11 +235,15 @@ def scan_projects_dir_for_sms_symlinks(cwd: Path) -> dict[str, Path]:
             continue
         if not entry.name.endswith(".jsonl"):
             continue
-        target = os.readlink(entry)
+        raw_target = os.readlink(entry)
+        target_path = Path(raw_target)
+        if not target_path.is_absolute():
+            target_path = (entry.parent / target_path).resolve()
+        target = str(target_path)
         if not target.startswith(sms_sessions_prefix):
             continue
         uuid = entry.name[:-len(".jsonl")]
-        out[uuid] = Path(target)
+        out[uuid] = target_path
     return out
 
 
@@ -327,6 +331,15 @@ def cmd_new(args: argparse.Namespace) -> int:
     cwd = Path.cwd()
     parent = current_branch(cwd)
 
+    # Pre-check: refuse if branch already in tree.json (before touching git)
+    t = Tree.load(cwd)
+    if t.branch(args.branch) is not None:
+        sys.stderr.write(
+            f"error: branch '{args.branch}' already in tree.json. "
+            f"To re-attach, manually edit tree.json or implement `sms adopt` (future).\n"
+        )
+        return 1
+
     # Create branch
     subprocess.run(
         ["git", "checkout", "-b", args.branch],
@@ -370,30 +383,32 @@ def cmd_fork(args: argparse.Namespace) -> int:
         )
         return 1
 
+    # Read-only lookup outside the lock.
+    t = Tree.load(cwd)
+    found = t.find_session(parent_uuid)
+    if found is None:
+        sys.stderr.write(f"error: session {parent_uuid} not in tree.json\n")
+        return 1
+    branch, _parent_record = found
+    new_uuid = str(_uuid.uuid4())
+
+    # Copy files OUTSIDE the lock — new_uuid is unique so no one else races on it.
+    parent_canonical = canonical_session_path(cwd, branch, parent_uuid)
+    new_canonical = canonical_session_path(cwd, branch, new_uuid)
+    new_canonical.parent.mkdir(parents=True, exist_ok=True)
+    if parent_canonical.exists():
+        shutil.copy2(parent_canonical, new_canonical)
+    else:
+        new_canonical.write_text("")
+
+    parent_sub = canonical_session_subdir(cwd, branch, parent_uuid)
+    if parent_sub.is_dir():
+        new_sub = canonical_session_subdir(cwd, branch, new_uuid)
+        shutil.copytree(parent_sub, new_sub)
+
+    # Tree mutation under lock — quick.
     with _tree_lock(sms_root(cwd)):
         t = Tree.load(cwd)
-        found = t.find_session(parent_uuid)
-        if found is None:
-            sys.stderr.write(f"error: session {parent_uuid} not in tree.json\n")
-            return 1
-        branch, _parent_record = found
-        new_uuid = str(_uuid.uuid4())
-
-        # Copy canonical files
-        parent_canonical = canonical_session_path(cwd, branch, parent_uuid)
-        new_canonical = canonical_session_path(cwd, branch, new_uuid)
-        if parent_canonical.exists():
-            shutil.copy2(parent_canonical, new_canonical)
-        else:
-            # Parent file missing — write an empty file so resume can extend it
-            new_canonical.parent.mkdir(parents=True, exist_ok=True)
-            new_canonical.write_text("")
-
-        parent_sub = canonical_session_subdir(cwd, branch, parent_uuid)
-        if parent_sub.is_dir():
-            new_sub = canonical_session_subdir(cwd, branch, new_uuid)
-            shutil.copytree(parent_sub, new_sub)
-
         t.add_session(branch, new_uuid, args.name or "", parent_uuid, False)
         t.save()
 
@@ -519,7 +534,13 @@ def cmd_tree(args: argparse.Namespace) -> int:
     for k in children:
         children[k].sort()
 
-    def render(name: str, indent: int) -> None:
+    seen: set[str] = set()
+
+    def render(name: str, indent: int, hidden_parent: str | None = None) -> None:
+        if name in seen:
+            sys.stderr.write(f"warning: cycle in branch tree at '{name}'\n")
+            return
+        seen.add(name)
         b = branches[name]
         marker = "★" if name == cur else " "
         session_count = len(b["sessions"])
@@ -529,8 +550,9 @@ def cmd_tree(args: argparse.Namespace) -> int:
         )
         state = b.get("state", "active")
         state_suffix = f"  [{state}]" if state != "active" else ""
+        hidden_suffix = f"  (parent: {hidden_parent} [hidden])" if hidden_parent else ""
         pad = "  " * indent
-        print(f"{pad}{marker} {name}  ({session_count})  {main_name}{state_suffix}".rstrip())
+        print(f"{pad}{marker} {name}  ({session_count})  {main_name}{state_suffix}{hidden_suffix}".rstrip())
         for child in children.get(name, []):
             render(child, indent + 1)
 
@@ -538,9 +560,18 @@ def cmd_tree(args: argparse.Namespace) -> int:
     visible = set()
     for parent, kids in children.items():
         visible.update(kids)
-    roots = [n for n in sorted(visible) if branches[n].get("parent") not in visible]
-    for root in roots:
-        render(root, 0)
+    roots: list[tuple[str, str | None]] = []
+    for n in sorted(visible):
+        p = branches[n].get("parent")
+        if p in visible:
+            continue
+        if p is not None and p in branches:
+            # Parent exists in tree.json but was filtered out by state
+            roots.append((n, p))
+        else:
+            roots.append((n, None))
+    for root, hidden_parent in roots:
+        render(root, 0, hidden_parent)
     return 0
 
 
@@ -564,7 +595,9 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     print("=== sms context ===")
     print(f"Branch: {branch}  (parent: {parent})")
     print(f"Notes dir: {notes_dir}")
-    print(f"Other sessions on this branch: {len(sessions)}")
+    main_count = sum(1 for s in sessions.values() if s.get("is_main"))
+    sub_count = len(sessions) - main_count
+    print(f"Sessions on this branch: {len(sessions)} ({main_count} main, {sub_count} sub)")
     return 0
 
 # -------------------------- argparse / main --------------------------------

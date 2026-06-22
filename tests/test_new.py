@@ -97,3 +97,23 @@ def test_new_captures_parent_before_checkout(
     run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
     t = _read_tree(scratch_repo)
     assert t["branches"]["feature-x"]["parent"] == "feature-base"
+
+
+def test_new_refuses_when_branch_already_in_tree_but_not_in_git(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """If tree.json has a branch but git doesn't, sms new should refuse before touching git."""
+    run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    # Delete the git branch
+    subprocess.run(["git", "checkout", "main"], cwd=scratch_repo, check=True, capture_output=True)
+    subprocess.run(["git", "branch", "-D", "feature-x"], cwd=scratch_repo, check=True, capture_output=True)
+    # tree.json still has feature-x
+    result = run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    assert result.returncode != 0
+    assert "tree.json" in result.stderr.lower()
+    # Verify git was NOT touched (still on main)
+    branch = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=scratch_repo, capture_output=True, text=True,
+    ).stdout.strip()
+    assert branch == "main"
