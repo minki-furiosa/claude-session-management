@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
+import fcntl
+import json
 import os
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator, Literal
 
 
 # -------------------------- Path helpers -----------------------------------
@@ -55,6 +60,110 @@ def sms_root(cwd: Path) -> Path:
     return find_main_git_dir(cwd) / "sms"
 
 
+# -------------------------- Tree class and locking ---------------------------
+
+
+def _iso_now() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+@contextmanager
+def _tree_lock(sms_dir: Path) -> Iterator[None]:
+    """Hold a file lock for the duration of a tree mutation."""
+    sms_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = sms_dir / ".lock"
+    with open(lock_path, "w") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+class Tree:
+    def __init__(self, path: Path, data: dict) -> None:
+        self.path = path
+        self.data = data
+
+    @classmethod
+    def load(cls, cwd: Path) -> "Tree":
+        path = sms_root(cwd) / "tree.json"
+        if not path.exists():
+            return cls(path, {"branches": {}})
+        try:
+            data = json.loads(path.read_text())
+        except json.JSONDecodeError as e:
+            sys.stderr.write(
+                f"error: tree.json at {path} is not valid JSON ({e}). "
+                "Refusing to overwrite. Inspect manually.\n"
+            )
+            raise SystemExit(2)
+        if not isinstance(data, dict) or "branches" not in data:
+            sys.stderr.write(f"error: tree.json at {path} has unexpected shape\n")
+            raise SystemExit(2)
+        return cls(path, data)
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(self.data, indent=2, sort_keys=True) + "\n")
+        os.replace(tmp, self.path)
+
+    # --- mutators ---
+
+    def add_branch(self, name: str, parent: str | None) -> None:
+        if name in self.data["branches"]:
+            sys.stderr.write(f"error: branch '{name}' already in tree.json\n")
+            raise SystemExit(1)
+        self.data["branches"][name] = {
+            "parent": parent,
+            "state": "active",
+            "created_at": _iso_now(),
+            "sessions": {},
+        }
+
+    def add_session(
+        self, branch: str, uuid: str, name: str,
+        parent_uuid: str | None, is_main: bool,
+    ) -> None:
+        b = self.data["branches"].get(branch)
+        if b is None:
+            sys.stderr.write(f"error: branch '{branch}' not in tree.json\n")
+            raise SystemExit(1)
+        if is_main:
+            for u, s in b["sessions"].items():
+                s["is_main"] = False
+        b["sessions"][uuid] = {
+            "name": name,
+            "parent_uuid": parent_uuid,
+            "is_main": is_main,
+            "created_at": _iso_now(),
+        }
+
+    def set_main(self, branch: str, uuid: str) -> None:
+        b = self.data["branches"].get(branch)
+        if b is None or uuid not in b["sessions"]:
+            sys.stderr.write(f"error: session {uuid} not on branch '{branch}'\n")
+            raise SystemExit(1)
+        for u, s in b["sessions"].items():
+            s["is_main"] = (u == uuid)
+
+    def set_state(self, branch: str, state: Literal["active", "merged", "backlog"]) -> None:
+        if branch not in self.data["branches"]:
+            sys.stderr.write(f"error: branch '{branch}' not in tree.json\n")
+            raise SystemExit(1)
+        self.data["branches"][branch]["state"] = state
+
+    def find_session(self, uuid: str) -> tuple[str, dict] | None:
+        for name, b in self.data["branches"].items():
+            if uuid in b["sessions"]:
+                return name, b["sessions"][uuid]
+        return None
+
+    def branch(self, name: str) -> dict | None:
+        return self.data["branches"].get(name)
+
+
 # -------------------------- Subcommands ------------------------------------
 
 
@@ -69,6 +178,30 @@ def cmd_debug_paths(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_debug_tree(args: argparse.Namespace) -> int:
+    """(internal) tree.json mutations used by tests."""
+    cwd = Path.cwd()
+    with _tree_lock(sms_root(cwd)):
+        t = Tree.load(cwd)
+        sub = args.tree_sub
+        if sub == "init":
+            pass  # load was enough
+        elif sub == "add-branch":
+            t.add_branch(args.name, args.parent)
+        elif sub == "add-session":
+            is_main = args.is_main.lower() == "true"
+            t.add_session(args.branch, args.uuid, args.name, None, is_main)
+        elif sub == "set-main":
+            t.set_main(args.branch, args.uuid)
+        elif sub == "set-state":
+            t.set_state(args.branch, args.state)
+        else:
+            sys.stderr.write(f"error: unknown debug-tree sub {sub}\n")
+            return 2
+        t.save()
+    return 0
+
+
 # -------------------------- argparse / main --------------------------------
 
 
@@ -78,6 +211,20 @@ def main(argv: list[str] | None = None) -> int:
 
     p_dbg = sub.add_parser("debug-paths", help="(internal) dump resolved paths")
     p_dbg.set_defaults(func=cmd_debug_paths)
+
+    p_dt = sub.add_parser("debug-tree", help="(internal) tree.json operations")
+    p_dt_sub = p_dt.add_subparsers(dest="tree_sub", required=True)
+    p_dt_sub.add_parser("init")
+    p_add = p_dt_sub.add_parser("add-branch")
+    p_add.add_argument("name"); p_add.add_argument("parent")
+    p_as = p_dt_sub.add_parser("add-session")
+    p_as.add_argument("branch"); p_as.add_argument("uuid")
+    p_as.add_argument("name"); p_as.add_argument("is_main")
+    p_sm = p_dt_sub.add_parser("set-main")
+    p_sm.add_argument("branch"); p_sm.add_argument("uuid")
+    p_ss = p_dt_sub.add_parser("set-state")
+    p_ss.add_argument("branch"); p_ss.add_argument("state", choices=["active", "merged", "backlog"])
+    p_dt.set_defaults(func=cmd_debug_tree)
 
     args = parser.parse_args(argv)
     return args.func(args)
