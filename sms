@@ -365,12 +365,64 @@ def cmd_new(args: argparse.Namespace) -> int:
         t.save()
 
     (sms_root(cwd) / "sessions" / args.branch).mkdir(parents=True, exist_ok=True)
+    seed_session_jsonl(canonical_session_path(cwd, args.branch, new_uuid), new_uuid)
     make_session_symlink(cwd, args.branch, new_uuid)
 
     print(new_uuid)
-    if args.no_launch:
-        return 0
-    os.execvp("claude", ["claude", "--session-id", new_uuid])
+    if args.launch:
+        os.execvp("claude", ["claude", "--session-id", new_uuid])
+    return 0
+
+
+def seed_session_jsonl(path: Path, uuid: str) -> None:
+    """Write a minimal valid jsonl line so the new session is visible in Claude's /resume picker.
+
+    Without this, an empty session has no on-disk jsonl until Claude is launched and
+    a first message is sent — which means the picker doesn't show it.
+
+    The single line below mirrors the very first entry every real session has on disk
+    (a queue-operation/enqueue with the sessionId). Claude appends subsequent entries
+    when it next opens the session.
+    """
+    iso = _iso_now()
+    line = json.dumps({
+        "type": "queue-operation",
+        "operation": "enqueue",
+        "timestamp": iso,
+        "sessionId": uuid,
+    }) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(line)
+
+
+def cmd_session_new(args: argparse.Namespace) -> int:
+    """Add a new blank session to the current sms-tracked branch."""
+    cwd = Path.cwd()
+    branch = current_branch_or_none(cwd)
+    if branch is None:
+        sys.stderr.write("error: detached HEAD; sms session-new requires a named branch\n")
+        return 1
+    t = Tree.load(cwd)
+    if t.branch(branch) is None:
+        sys.stderr.write(
+            f"error: branch '{branch}' is not sms-tracked. "
+            f"Run `sms new <branch>` first.\n"
+        )
+        return 1
+
+    new_uuid = str(_uuid.uuid4())
+    with _tree_lock(sms_root(cwd)):
+        t = Tree.load(cwd)
+        # parent_uuid=None: a fresh session attached to the branch (not derived from any sibling).
+        t.add_session(branch, new_uuid, args.name or "", None, False)
+        t.save()
+
+    (sms_root(cwd) / "sessions" / branch).mkdir(parents=True, exist_ok=True)
+    seed_session_jsonl(canonical_session_path(cwd, branch, new_uuid), new_uuid)
+    make_session_symlink(cwd, branch, new_uuid)
+
+    print(new_uuid)
+    return 0
 
 
 def cmd_checkout(args: argparse.Namespace) -> int:
@@ -628,15 +680,22 @@ def main(argv: list[str] | None = None) -> int:
     p_new = sub.add_parser("new", help="create a new branch + initial session")
     p_new.add_argument("branch")
     p_new.add_argument("--name", default=None)
+    p_new.add_argument("--launch", action="store_true",
+                       help="exec `claude` after setup (default: just print UUID; open in VSCode picker)")
     p_new.add_argument("--no-launch", action="store_true",
-                       help="(testing) do not exec claude after setup")
+                       help=argparse.SUPPRESS)  # back-compat no-op (default is now no-launch)
     p_new.set_defaults(func=cmd_new)
+
+    p_sn = sub.add_parser("session-new",
+                          help="add a new blank session to the current sms-tracked branch")
+    p_sn.add_argument("--name", default=None)
+    p_sn.set_defaults(func=cmd_session_new)
 
     p_fork = sub.add_parser("fork", help="fork the current Claude session")
     p_fork.add_argument("--from", dest="from_", default=None, metavar="UUID")
     p_fork.add_argument("--name", default=None)
     p_fork.add_argument("--no-launch", action="store_true",
-                       help="(testing) do not exec claude after setup")
+                       help=argparse.SUPPRESS)  # no-op: fork never launches claude
     p_fork.set_defaults(func=cmd_fork)
 
     p_res = sub.add_parser("resume", help="(fallback) resume a session from terminal")

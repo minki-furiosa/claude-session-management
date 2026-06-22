@@ -48,10 +48,15 @@ settings_path.write_text(json.dumps(data, indent=2) + "\n")
 print(f"registered SessionStart hook in {settings_path}")
 PY
 
-# 4. Install skills
+# 4. Install skills (Claude Code expects <name>/SKILL.md, not flat <name>.md)
 for f in skills/*.md; do
-    cp "$f" "$SKILL_DIR/$(basename "$f")"
-    echo "installed: $SKILL_DIR/$(basename "$f")"
+    name=$(basename "$f" .md)
+    dest_dir="$SKILL_DIR/$name"
+    # Replace any pre-existing flat .md from older installs.
+    rm -f "$SKILL_DIR/$name.md"
+    mkdir -p "$dest_dir"
+    cp "$f" "$dest_dir/SKILL.md"
+    echo "installed: $dest_dir/SKILL.md"
 done
 
 echo ""
