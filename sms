@@ -405,6 +405,45 @@ def cmd_fork(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_uuid_prefix(t: Tree, prefix: str) -> tuple[str, str] | None:
+    """Return (branch, uuid) for the unique session whose UUID startswith `prefix`. Or None for ambiguity / no match."""
+    matches: list[tuple[str, str]] = []
+    for branch_name, branch in t.data["branches"].items():
+        for uuid in branch["sessions"]:
+            if uuid.startswith(prefix):
+                matches.append((branch_name, uuid))
+    if len(matches) == 1:
+        return matches[0]
+    return None if not matches else ("__ambiguous__", "")
+
+
+def cmd_resume(args: argparse.Namespace) -> int:
+    cwd = Path.cwd()
+    t = Tree.load(cwd)
+    resolved = _resolve_uuid_prefix(t, args.target)
+    if resolved is None:
+        sys.stderr.write(f"error: no session matches '{args.target}'\n")
+        return 1
+    if resolved[0] == "__ambiguous__":
+        sys.stderr.write(f"error: ambiguous prefix '{args.target}' matches multiple sessions\n")
+        return 1
+    branch, uuid = resolved
+
+    if current_branch(cwd) != branch:
+        sys.stderr.write(
+            f"error: session {uuid} belongs to branch '{branch}', "
+            f"but current worktree is on '{current_branch(cwd)}'. "
+            f"Branch is not checked out here — run `sms checkout {branch}` first.\n"
+        )
+        return 1
+
+    cmd_sync(argparse.Namespace())
+    print(uuid)
+    if args.no_launch:
+        return 0
+    os.execvp("claude", ["claude", "--resume", uuid])
+
+
 # -------------------------- argparse / main --------------------------------
 
 
@@ -430,6 +469,11 @@ def main(argv: list[str] | None = None) -> int:
     p_fork.add_argument("--from", dest="from_", default=None, metavar="UUID")
     p_fork.add_argument("--name", default=None)
     p_fork.set_defaults(func=cmd_fork)
+
+    p_res = sub.add_parser("resume", help="(fallback) resume a session from terminal")
+    p_res.add_argument("target", help="UUID or unique prefix")
+    p_res.add_argument("--no-launch", action="store_true")
+    p_res.set_defaults(func=cmd_resume)
 
     p_dbg = sub.add_parser("debug-paths", help="(internal) dump resolved paths")
     p_dbg.set_defaults(func=cmd_debug_paths)
