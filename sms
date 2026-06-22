@@ -543,6 +543,30 @@ def cmd_tree(args: argparse.Namespace) -> int:
         render(root, 0)
     return 0
 
+
+def cmd_hook_session_start(args: argparse.Namespace) -> int:
+    """Emit context block for current branch if it's in tree.json. Silent no-op if not."""
+    cwd = Path(args.cwd).resolve() if args.cwd else Path.cwd()
+    try:
+        branch = current_branch(cwd)
+    except (SystemExit, subprocess.CalledProcessError):
+        return 0  # not a git repo or detached HEAD — silent
+    try:
+        t = Tree.load(cwd)
+    except SystemExit:
+        return 0
+    b = t.branch(branch)
+    if b is None:
+        return 0
+    parent = b.get("parent") or "<none>"
+    sessions = b["sessions"]
+    notes_dir = sms_root(cwd) / "branches" / branch / "notes"
+    print("=== sms context ===")
+    print(f"Branch: {branch}  (parent: {parent})")
+    print(f"Notes dir: {notes_dir}")
+    print(f"Other sessions on this branch: {len(sessions)}")
+    return 0
+
 # -------------------------- argparse / main --------------------------------
 
 
@@ -588,6 +612,12 @@ def main(argv: list[str] | None = None) -> int:
     p_sm = sub.add_parser("set-main", help="mark a session as the branch's main")
     p_sm.add_argument("target")
     p_sm.set_defaults(func=cmd_set_main)
+
+    p_hook = sub.add_parser("hook", help="(internal) hook drivers")
+    p_hook_sub = p_hook.add_subparsers(dest="hook_sub", required=True)
+    p_hss = p_hook_sub.add_parser("session-start")
+    p_hss.add_argument("--cwd", default=None)
+    p_hss.set_defaults(func=cmd_hook_session_start)
 
     for name, fn in [("mark-merged", cmd_mark_merged),
                      ("backlog", cmd_backlog),
