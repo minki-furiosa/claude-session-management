@@ -479,6 +479,28 @@ def cmd_set_main(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_set_state(args: argparse.Namespace, state: str) -> int:
+    cwd = Path.cwd()
+    branch = args.branch or current_branch(cwd)
+    with _tree_lock(sms_root(cwd)):
+        t = Tree.load(cwd)
+        t.set_state(branch, state)
+        t.save()
+    return 0
+
+
+def cmd_mark_merged(args: argparse.Namespace) -> int:
+    return _cmd_set_state(args, "merged")
+
+
+def cmd_backlog(args: argparse.Namespace) -> int:
+    return _cmd_set_state(args, "backlog")
+
+
+def cmd_activate(args: argparse.Namespace) -> int:
+    return _cmd_set_state(args, "active")
+
+
 def cmd_tree(args: argparse.Namespace) -> int:
     cwd = Path.cwd()
     t = Tree.load(cwd)
@@ -566,6 +588,13 @@ def main(argv: list[str] | None = None) -> int:
     p_sm = sub.add_parser("set-main", help="mark a session as the branch's main")
     p_sm.add_argument("target")
     p_sm.set_defaults(func=cmd_set_main)
+
+    for name, fn in [("mark-merged", cmd_mark_merged),
+                     ("backlog", cmd_backlog),
+                     ("activate", cmd_activate)]:
+        p = sub.add_parser(name)
+        p.add_argument("branch", nargs="?", default=None)
+        p.set_defaults(func=fn)
 
     p_dbg = sub.add_parser("debug-paths", help="(internal) dump resolved paths")
     p_dbg.set_defaults(func=cmd_debug_paths)
