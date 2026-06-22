@@ -1,8 +1,87 @@
 #!/usr/bin/env python3
-"""sms — Session Management System. See docs/superpowers/specs/2026-06-22-sms-branch-scoped-sessions-design.md."""
+"""sms — Session Management System."""
+from __future__ import annotations
 
-def main() -> int:
-    raise SystemExit(2)  # not yet implemented
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+# -------------------------- Path helpers -----------------------------------
+
+
+def _run_git(cwd: Path, *args: str) -> str:
+    """Run a git command and return trimmed stdout. Raises CalledProcessError on failure."""
+    result = subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True,
+    )
+    return result.stdout.strip()
+
+
+def find_main_git_dir(cwd: Path) -> Path:
+    """Return the main repo's .git directory (not the worktree's pointer file)."""
+    common = _run_git(cwd, "rev-parse", "--git-common-dir")
+    p = Path(common)
+    if not p.is_absolute():
+        p = (cwd / p).resolve()
+    return p
+
+
+def current_branch(cwd: Path) -> str:
+    """Return the current branch name. Raises SystemExit if HEAD is detached."""
+    name = _run_git(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+    if name == "HEAD":
+        sys.stderr.write("error: HEAD is detached; sms requires a named branch\n")
+        raise SystemExit(1)
+    return name
+
+
+def cwd_hash(cwd: Path) -> str:
+    """Claude Code's cwd-hash convention: absolute path with '/' replaced by '-'."""
+    return str(cwd.resolve()).replace("/", "-")
+
+
+def home_dir() -> Path:
+    return Path(os.environ.get("HOME", "~")).expanduser()
+
+
+def claude_projects_dir(cwd: Path) -> Path:
+    return home_dir() / ".claude" / "projects" / cwd_hash(cwd)
+
+
+def sms_root(cwd: Path) -> Path:
+    return find_main_git_dir(cwd) / "sms"
+
+
+# -------------------------- Subcommands ------------------------------------
+
+
+def cmd_debug_paths(args: argparse.Namespace) -> int:
+    """Dump resolved paths for the current cwd. Used by tests."""
+    cwd = Path.cwd()
+    print(f"main_git_dir={find_main_git_dir(cwd)}")
+    print(f"branch={current_branch(cwd)}")
+    print(f"cwd_hash={cwd_hash(cwd)}")
+    print(f"projects_dir={claude_projects_dir(cwd)}")
+    print(f"sms_root={sms_root(cwd)}")
+    return 0
+
+
+# -------------------------- argparse / main --------------------------------
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="sms")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_dbg = sub.add_parser("debug-paths", help="(internal) dump resolved paths")
+    p_dbg.set_defaults(func=cmd_debug_paths)
+
+    args = parser.parse_args(argv)
+    return args.func(args)
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
