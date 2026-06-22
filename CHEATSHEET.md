@@ -98,8 +98,13 @@ For sessions on sms-tracked branches, the SessionStart hook adds to the session 
 ```
 === sms context ===
 Branch: <branch>  (parent: <parent>)
-Notes dir: <repo>/.git/sms/branches/<branch>/notes/
 Sessions on this branch: N (M main, K sub)
+
+sms branch memory — durable scratchpad shared by every session on this branch.
+  Path: <repo>/.git/sms/branches/<branch>/notes/
+  Survives worktree moves (lives in .git, not the working tree).
+  Use it for handoffs, findings, todos that other sessions on this branch should pick up.
+  Existing files: <list> | (empty — drop markdown files here as needed.)
 ```
 
 Sessions on non-sms branches see nothing — hook is a silent no-op.
