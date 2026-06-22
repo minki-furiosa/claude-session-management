@@ -26,10 +26,10 @@ def test_new_branch_creates_branch_and_tree_entry(
     ).stdout.strip()
     assert branch == "feature-x"
 
-    # tree entry exists with parent
+    # tree entry exists. main is NOT in sms tree → parent is None (root branch).
     t = _read_tree(scratch_repo)
     assert "feature-x" in t["branches"]
-    assert t["branches"]["feature-x"]["parent"] == "main"
+    assert t["branches"]["feature-x"]["parent"] is None
     assert t["branches"]["feature-x"]["state"] == "active"
     assert len(t["branches"]["feature-x"]["sessions"]) == 1
 
@@ -86,17 +86,45 @@ def test_new_refuses_duplicate_branch(
     assert "feature-x" in (result.stderr + result.stdout)
 
 
-def test_new_captures_parent_before_checkout(
+def test_new_parent_is_none_when_current_branch_not_in_sms_tree(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
-    """When run from branch X, parent should be X, not whatever HEAD is after checkout."""
+    """sms tree's parent encodes sms-managed lineage. If the current git branch
+    isn't sms-tracked, the new branch has no sms parent (orphan / root)."""
     subprocess.run(
         ["git", "checkout", "-b", "feature-base"],
         cwd=scratch_repo, check=True, capture_output=True,
     )
     run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
     t = _read_tree(scratch_repo)
-    assert t["branches"]["feature-x"]["parent"] == "feature-base"
+    assert t["branches"]["feature-x"]["parent"] is None
+
+
+def test_new_parent_set_when_current_branch_is_in_sms_tree(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """If the current branch IS sms-tracked, parent is captured for the new branch."""
+    run_sms(["new", "feature-a", "--no-launch"], cwd=scratch_repo)
+    # Now on feature-a, which is in sms tree.
+    run_sms(["new", "feature-b", "--no-launch"], cwd=scratch_repo)
+    t = _read_tree(scratch_repo)
+    assert t["branches"]["feature-b"]["parent"] == "feature-a"
+
+
+def test_new_parent_is_none_on_detached_head(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """Detached HEAD is allowed; parent is None (sms-tree root)."""
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=scratch_repo, capture_output=True, text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "checkout", head], cwd=scratch_repo, check=True, capture_output=True,
+    )
+    result = run_sms(["new", "feature-x", "--no-launch"], cwd=scratch_repo)
+    assert result.returncode == 0, result.stderr
+    t = _read_tree(scratch_repo)
+    assert t["branches"]["feature-x"]["parent"] is None
 
 
 def test_new_refuses_when_branch_already_in_tree_but_not_in_git(

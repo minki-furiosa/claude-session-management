@@ -45,6 +45,12 @@ def current_branch(cwd: Path) -> str:
     return name
 
 
+def current_branch_or_none(cwd: Path) -> str | None:
+    """Like current_branch but returns None on detached HEAD (no error)."""
+    name = _run_git(cwd, "rev-parse", "--abbrev-ref", "HEAD")
+    return None if name == "HEAD" else name
+
+
 def cwd_hash(cwd: Path) -> str:
     """Claude Code's cwd-hash convention: absolute path with '/' replaced by '-'."""
     return str(cwd.resolve()).replace("/", "-")
@@ -329,7 +335,6 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
 def cmd_new(args: argparse.Namespace) -> int:
     cwd = Path.cwd()
-    parent = current_branch(cwd)
 
     # Pre-check: refuse if branch already in tree.json (before touching git)
     t = Tree.load(cwd)
@@ -339,6 +344,12 @@ def cmd_new(args: argparse.Namespace) -> int:
             f"To re-attach, manually edit tree.json or implement `sms adopt` (future).\n"
         )
         return 1
+
+    # Parent encodes sms-tree lineage, not arbitrary git branch position.
+    # Capture parent only if the current branch is itself sms-tracked;
+    # otherwise this new branch is a root (parent=None). Also None on detached HEAD.
+    candidate = current_branch_or_none(cwd)
+    parent = candidate if candidate is not None and t.branch(candidate) is not None else None
 
     # Create branch
     subprocess.run(
