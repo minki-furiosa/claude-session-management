@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import uuid as _uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Literal
@@ -293,12 +294,45 @@ def cmd_debug_symlink(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_new(args: argparse.Namespace) -> int:
+    cwd = Path.cwd()
+    parent = current_branch(cwd)
+
+    # Create branch
+    subprocess.run(
+        ["git", "checkout", "-b", args.branch],
+        cwd=cwd, check=True,
+    )
+
+    new_uuid = str(_uuid.uuid4())
+    with _tree_lock(sms_root(cwd)):
+        t = Tree.load(cwd)
+        t.add_branch(args.branch, parent)
+        t.add_session(args.branch, new_uuid, args.name or "", None, True)
+        t.save()
+
+    (sms_root(cwd) / "sessions" / args.branch).mkdir(parents=True, exist_ok=True)
+    make_session_symlink(cwd, args.branch, new_uuid)
+
+    print(new_uuid)
+    if args.no_launch:
+        return 0
+    os.execvp("claude", ["claude", "--session-id", new_uuid])
+
+
 # -------------------------- argparse / main --------------------------------
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sms")
     sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_new = sub.add_parser("new", help="create a new branch + initial session")
+    p_new.add_argument("branch")
+    p_new.add_argument("--name", default=None)
+    p_new.add_argument("--no-launch", action="store_true",
+                       help="(testing) do not exec claude after setup")
+    p_new.set_defaults(func=cmd_new)
 
     p_dbg = sub.add_parser("debug-paths", help="(internal) dump resolved paths")
     p_dbg.set_defaults(func=cmd_debug_paths)
