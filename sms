@@ -461,6 +461,49 @@ def cmd_sessions(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def cmd_tree(args: argparse.Namespace) -> int:
+    cwd = Path.cwd()
+    t = Tree.load(cwd)
+    try:
+        cur = current_branch(cwd)
+    except SystemExit:
+        cur = None
+
+    branches = t.data["branches"]
+    # Build child list
+    children: dict[str | None, list[str]] = {}
+    for name, b in branches.items():
+        if not args.all and b.get("state") in ("merged", "backlog"):
+            continue
+        children.setdefault(b.get("parent"), []).append(name)
+    for k in children:
+        children[k].sort()
+
+    def render(name: str, indent: int) -> None:
+        b = branches[name]
+        marker = "★" if name == cur else " "
+        session_count = len(b["sessions"])
+        main_name = next(
+            (s["name"] for s in b["sessions"].values() if s.get("is_main") and s.get("name")),
+            "",
+        )
+        state = b.get("state", "active")
+        state_suffix = f"  [{state}]" if state != "active" else ""
+        pad = "  " * indent
+        print(f"{pad}{marker} {name}  ({session_count})  {main_name}{state_suffix}".rstrip())
+        for child in children.get(name, []):
+            render(child, indent + 1)
+
+    # Roots: branches whose parent is None or whose parent is not in the (visible) set
+    visible = set()
+    for parent, kids in children.items():
+        visible.update(kids)
+    roots = [n for n in sorted(visible) if branches[n].get("parent") not in visible]
+    for root in roots:
+        render(root, 0)
+    return 0
+
 # -------------------------- argparse / main --------------------------------
 
 
@@ -497,6 +540,11 @@ def main(argv: list[str] | None = None) -> int:
     p_ses = sub.add_parser("sessions", help="list sessions for a branch")
     p_ses.add_argument("--branch", default=None)
     p_ses.set_defaults(func=cmd_sessions)
+
+    p_tree = sub.add_parser("tree", help="render branch tree")
+    p_tree.add_argument("--all", action="store_true",
+                        help="include merged and backlog branches")
+    p_tree.set_defaults(func=cmd_tree)
 
     p_dbg = sub.add_parser("debug-paths", help="(internal) dump resolved paths")
     p_dbg.set_defaults(func=cmd_debug_paths)
