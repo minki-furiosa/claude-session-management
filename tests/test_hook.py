@@ -16,7 +16,7 @@ def test_hook_emits_context_for_sms_branch(
     out = result.stdout
     assert "sms context" in out.lower()
     assert "feature-x" in out
-    assert "Notes dir" in out
+    assert "sms branch memory" in out
 
 
 def test_hook_silent_for_non_sms_branch(

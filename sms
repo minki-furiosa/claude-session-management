@@ -429,24 +429,33 @@ def materialize_session(cwd: Path, uuid: str, name: str = "") -> None:
         )
 
 
-def write_custom_title(canonical: Path, uuid: str, title: str) -> None:
-    """Append a `custom-title` entry to the canonical jsonl so Claude's
-    /resume picker displays the chosen label.
+def stamp_session_title(canonical: Path, uuid: str, title: str) -> None:
+    """Strip any existing `custom-title`/`agent-name` lines from the jsonl
+    and write fresh ones matching this session's UUID and the chosen title.
 
-    Used by `sms fork` (and any flow that materializes a jsonl without
-    running claude). When --name is passed to `claude --print`, claude
-    writes this entry itself; here we do the equivalent by hand.
+    Used by `sms fork`: a copied parent jsonl carries the parent's title
+    metadata. If we only APPEND a new title line, Claude re-reads the
+    inherited entries on resume and overrides with the parent's name.
+    Stripping and rewriting puts our title where Claude actually finds it.
     """
     if not title:
         return
-    line = json.dumps({
-        "type": "custom-title",
-        "customTitle": title,
-        "sessionId": uuid,
-    }) + "\n"
+    new_lines = [
+        json.dumps({"type": "custom-title", "customTitle": title, "sessionId": uuid}),
+        json.dumps({"type": "agent-name",   "agentName":   title, "sessionId": uuid}),
+    ]
     canonical.parent.mkdir(parents=True, exist_ok=True)
-    with open(canonical, "a") as f:
-        f.write(line)
+    if canonical.exists():
+        kept = [
+            line for line in canonical.read_text().splitlines()
+            if '"type":"custom-title"' not in line
+            and '"type": "custom-title"' not in line
+            and '"type":"agent-name"' not in line
+            and '"type": "agent-name"' not in line
+        ]
+        canonical.write_text("\n".join(new_lines + kept) + "\n")
+    else:
+        canonical.write_text("\n".join(new_lines) + "\n")
 
 
 def cmd_session_delete(args: argparse.Namespace) -> int:
@@ -608,9 +617,11 @@ def cmd_fork(args: argparse.Namespace) -> int:
         t.add_session(branch, new_uuid, name, parent_uuid, False)
         t.save()
 
-    # Append a custom-title to the copied jsonl so the picker shows the fork's
-    # name (not the parent's name inherited from the copy).
-    write_custom_title(new_canonical, new_uuid, name)
+    # Rewrite the copied jsonl's title metadata: strip the parent's
+    # custom-title/agent-name lines and prepend fresh ones for the fork.
+    # Appending alone isn't enough — Claude re-reads inherited entries on
+    # resume and would otherwise override our title with the parent's.
+    stamp_session_title(new_canonical, new_uuid, name)
 
     # Make the fork visible wherever the parent is visible.
     #
@@ -824,12 +835,22 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     parent = b.get("parent") or "<none>"
     sessions = b["sessions"]
     notes_dir = sms_root(cwd) / "branches" / branch / "notes"
-    print("=== sms context ===")
-    print(f"Branch: {branch}  (parent: {parent})")
-    print(f"Notes dir: {notes_dir}")
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    existing = sorted(p.name for p in notes_dir.iterdir() if p.is_file())
     main_count = sum(1 for s in sessions.values() if s.get("is_main"))
     sub_count = len(sessions) - main_count
+    print("=== sms context ===")
+    print(f"Branch: {branch}  (parent: {parent})")
     print(f"Sessions on this branch: {len(sessions)} ({main_count} main, {sub_count} sub)")
+    print()
+    print("sms branch memory — durable scratchpad shared by every session on this branch.")
+    print(f"  Path: {notes_dir}")
+    print("  Survives worktree moves (lives in .git, not the working tree).")
+    print("  Use it for handoffs, findings, todos that other sessions on this branch should pick up.")
+    if existing:
+        print(f"  Existing files: {', '.join(existing)}")
+    else:
+        print("  (empty — drop markdown files here as needed.)")
     return 0
 
 # -------------------------- argparse / main --------------------------------

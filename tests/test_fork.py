@@ -36,12 +36,17 @@ def test_fork_copies_jsonl_and_registers(
     assert sessions[new_uuid]["is_main"] is False
     assert sessions[new_uuid]["name"] == "review-perf"
 
-    # Canonical copy: starts with the parent's content, plus a custom-title
-    # line appended so the /resume picker shows the fork's name.
+    # Canonical copy: parent's content is included, plus fresh custom-title /
+    # agent-name lines prepended (parent's title metadata, if any, is stripped
+    # so the picker doesn't override the fork's name on resume).
     new_canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{new_uuid}.jsonl"
     content = new_canonical.read_text()
-    assert content.startswith('{"line":1}\n{"line":2}\n')
+    assert '{"line": 1}' in content or '{"line":1}' in content
+    assert '{"line": 2}' in content or '{"line":2}' in content
     assert '"customTitle": "review-perf"' in content
+    assert '"agentName": "review-perf"' in content
+    # The fork's title lines reference the new UUID, not the parent's.
+    assert f'"sessionId": "{new_uuid}"' in content
 
 
 def test_fork_creates_symlink_in_current_worktree(
