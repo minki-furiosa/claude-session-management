@@ -135,6 +135,18 @@ def test_new_parent_is_none_on_detached_head(
     assert t["branches"]["feature-x"]["parent"] is None
 
 
+def test_new_output_shows_picker_title(scratch_repo: Path, isolated_home: Path) -> None:
+    """Output includes the picker title (user finds sessions by title), with
+    the UUID still on the last line for scripts."""
+    result = run_sms(["new", "feature-x", "--name", "my draft", "--no-launch", "--no-materialize"],
+                     cwd=scratch_repo)
+    assert result.returncode == 0, result.stderr
+    assert "my draft" in result.stdout
+    t = _read_tree(scratch_repo)
+    uuid = next(iter(t["branches"]["feature-x"]["sessions"]))
+    assert result.stdout.strip().splitlines()[-1] == uuid
+
+
 def test_new_default_name_is_branch(scratch_repo: Path, isolated_home: Path) -> None:
     """Without --name, the first session is named after the branch."""
     run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)

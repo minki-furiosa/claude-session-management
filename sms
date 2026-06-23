@@ -345,6 +345,16 @@ def _default_session_name(branch: str, existing_count: int) -> str:
     return f"{branch} ({existing_count + 1})"
 
 
+def report_created_session(uuid: str, name: str) -> None:
+    """Print a session-created summary. The picker title is shown prominently
+    (the user finds sessions by title in the /resume picker), and the UUID is
+    always the LAST line so scripts/tests can parse it with `splitlines()[-1]`.
+    """
+    if name:
+        print(f'Created session — picker title: "{name}"')
+    print(uuid)
+
+
 def cmd_new(args: argparse.Namespace) -> int:
     cwd = Path.cwd()
 
@@ -388,7 +398,7 @@ def cmd_new(args: argparse.Namespace) -> int:
     if not args.no_materialize:
         materialize_session(cwd, new_uuid, name=name)
 
-    print(new_uuid)
+    report_created_session(new_uuid, name)
     return 0
 
 
@@ -558,7 +568,7 @@ def cmd_session_new(args: argparse.Namespace) -> int:
     if not args.no_materialize:
         materialize_session(cwd, new_uuid, name=name)
 
-    print(new_uuid)
+    report_created_session(new_uuid, name)
     return 0
 
 
@@ -599,7 +609,7 @@ def cmd_adopt(args: argparse.Namespace) -> int:
     if not args.no_materialize:
         materialize_session(cwd, new_uuid, name=name)
 
-    print(new_uuid)
+    report_created_session(new_uuid, name)
     return 0
 
 
@@ -701,7 +711,7 @@ def cmd_fork(args: argparse.Namespace) -> int:
     if not mirrored and current_branch_or_none(cwd) == branch:
         make_session_symlink(cwd, branch, new_uuid)
 
-    print(new_uuid)
+    report_created_session(new_uuid, name)
     return 0
 
 
