@@ -538,7 +538,8 @@ def cmd_session_new(args: argparse.Namespace) -> int:
     if t.branch(branch) is None:
         sys.stderr.write(
             f"error: branch '{branch}' is not sms-tracked. "
-            f"Run `sms new <branch>` first.\n"
+            f"For an existing branch, run `sms adopt` to register it; "
+            f"for a brand-new branch, `sms new <branch>`.\n"
         )
         return 1
 
@@ -549,6 +550,47 @@ def cmd_session_new(args: argparse.Namespace) -> int:
         existing = len(t.branch(branch)["sessions"])
         name = args.name or _default_session_name(branch, existing)
         t.add_session(branch, new_uuid, name, None, False)
+        t.save()
+
+    (sms_root(cwd) / "sessions" / branch).mkdir(parents=True, exist_ok=True)
+    make_session_symlink(cwd, branch, new_uuid)
+
+    if not args.no_materialize:
+        materialize_session(cwd, new_uuid, name=name)
+
+    print(new_uuid)
+    return 0
+
+
+def cmd_adopt(args: argparse.Namespace) -> int:
+    """Register the CURRENTLY checked-out (pre-existing) git branch into the
+    sms tree, then create its first (main) session.
+
+    Sibling of `sms new`: `new` creates a brand-new branch (git checkout -b);
+    `adopt` takes a branch that already exists. The branch is registered as a
+    root (parent=None) since adopt doesn't change the checkout and so has no
+    fork-point to record — edit tree.json or use a future `reparent` to set a
+    parent later.
+    """
+    cwd = Path.cwd()
+    branch = current_branch_or_none(cwd)
+    if branch is None:
+        sys.stderr.write("error: detached HEAD; sms adopt requires a named branch\n")
+        return 1
+    t = Tree.load(cwd)
+    if t.branch(branch) is not None:
+        sys.stderr.write(
+            f"error: branch '{branch}' is already sms-tracked. "
+            f"Use `sms session-new` to add another session.\n"
+        )
+        return 1
+
+    new_uuid = str(_uuid.uuid4())
+    with _tree_lock(sms_root(cwd)):
+        t = Tree.load(cwd)
+        t.add_branch(branch, None)
+        name = args.name or _default_session_name(branch, 0)
+        t.add_session(branch, new_uuid, name, None, True)
         t.save()
 
     (sms_root(cwd) / "sessions" / branch).mkdir(parents=True, exist_ok=True)
@@ -878,6 +920,13 @@ def main(argv: list[str] | None = None) -> int:
                        help="skip the background `claude --print` that makes the session "
                             "visible in the picker (faster, but session may be hidden)")
     p_new.set_defaults(func=cmd_new)
+
+    p_adopt = sub.add_parser("adopt",
+                             help="register the current (pre-existing) branch into the sms tree + create its first session")
+    p_adopt.add_argument("--name", default=None)
+    p_adopt.add_argument("--no-materialize", action="store_true",
+                         help="skip the background `claude --print` materialize step")
+    p_adopt.set_defaults(func=cmd_adopt)
 
     p_sn = sub.add_parser("session-new",
                           help="add a new blank session to the current sms-tracked branch")

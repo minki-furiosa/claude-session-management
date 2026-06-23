@@ -9,6 +9,7 @@ Run from any worktree's terminal (VSCode integrated terminal counts).
 | Command | Effect |
 |---|---|
 | `sms new <branch> [--name <label>]` | git checkout -b + register branch in sms tree + register first (main) session + materialize so the VSCode `/resume` picker shows it. Does NOT auto-launch Claude. Pass `--launch` to launch instead. |
+| `sms adopt [--name <label>]` | Register the CURRENT (already-existing, non-sms) branch into the tree + create its first session. Sibling of `sms new` for branches you made with plain git. Does not create/switch branches. Registered as a root (parent: none). |
 | `sms session-new [--name <label>]` | Add a blank sub-session to the current sms-tracked branch. Independent of the running session (no inherited conversation). |
 | `sms fork [--from <uuid>] [--name <label>]` | Fork a session — copy its jsonl to a new UUID, register as a sub on the same branch. With no `--from`, uses `$CLAUDE_CODE_SESSION_ID` (set automatically inside Claude). |
 
@@ -56,6 +57,7 @@ Each `/sms-*` skill shells out to the corresponding CLI command.
 | `/sms-tree` | `sms tree` |
 | `/sms-sessions` | `sms sessions` (current branch) |
 | `/sms-fork [name]` | `sms fork --name "<label>"` — reads `$CLAUDE_CODE_SESSION_ID` for the parent |
+| `/sms-adopt [name]` | `sms adopt --name "<label>"` — register the current existing branch |
 | `/sms-session-new [name]` | `sms session-new --name "<label>"` |
 | `/sms-set-main` | `sms set-main "$CLAUDE_CODE_SESSION_ID"` — promote the current session |
 | `/sms-mark-merged [branch]` | `sms mark-merged …` |

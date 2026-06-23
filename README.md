@@ -166,9 +166,10 @@ amongst themselves on naming.
 
 ## Limits (deliberate, for this iteration)
 
-- No automatic adoption of pre-existing branches/sessions. Only branches
-  created via `sms new` are in the tree. (`sms adopt` is a future
-  extension.)
+- No *automatic* adoption of pre-existing branches. Branches enter the tree
+  via `sms new` (brand-new) or `sms adopt` (an existing branch you're
+  currently on) — there's no background scan that pulls in untracked
+  branches on its own.
 - No `git branch -m` integration — if you rename a branch via git, the
   tree.json entry stays under the old name. (`sms rename-branch` is a
   future extension.)
