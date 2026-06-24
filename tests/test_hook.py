@@ -17,6 +17,19 @@ def test_hook_emits_context_for_sms_branch(
     assert "sms context" in out.lower()
     assert "feature-x" in out
     assert "sms branch memory" in out
+    assert "sms global memory" in out
+
+
+def test_hook_global_notes_path_is_repo_level(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """Global memory path is <repo>/.git/sms/notes (not under branches/)."""
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
+    result = run_sms(["hook", "session-start"], cwd=scratch_repo)
+    expected = str(scratch_repo / ".git" / "sms" / "notes")
+    assert expected in result.stdout
+    # Branch memory is a sibling under branches/, not the global one.
+    assert str(scratch_repo / ".git" / "sms" / "branches" / "feature-x" / "notes") in result.stdout
 
 
 def test_hook_silent_for_non_sms_branch(

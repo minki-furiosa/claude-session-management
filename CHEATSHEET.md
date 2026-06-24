@@ -102,14 +102,24 @@ For sessions on sms-tracked branches, the SessionStart hook adds to the session 
 Branch: <branch>  (parent: <parent>)
 Sessions on this branch: N (M main, K sub)
 
-sms branch memory — durable scratchpad shared by every session on this branch.
+sms branch memory — durable scratchpad shared by every session on THIS branch.
   Path: <repo>/.git/sms/branches/<branch>/notes/
   Survives worktree moves (lives in .git, not the working tree).
   Use it for handoffs, findings, todos that other sessions on this branch should pick up.
   Existing files: <list> | (empty — drop markdown files here as needed.)
+
+sms global memory — shared across ALL branches of this repo.
+  Path: <repo>/.git/sms/notes/
+  Same .git-backed, git-untracked storage; not tied to any one branch.
+  Use it for repo-wide knowledge every branch should see.
+  Existing files: <list> | (empty — drop markdown files here as needed.)
 ```
 
 Sessions on non-sms branches see nothing — hook is a silent no-op.
+
+**Two memory scopes:**
+- **branch memory** (`.git/sms/branches/<branch>/notes/`) — for one branch's sessions.
+- **global memory** (`.git/sms/notes/`) — repo-wide, shared by every branch. Both are git-untracked and shared across worktrees (they live in `.git`, which worktrees share).
 
 ---
 

@@ -886,21 +886,33 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
         return 0
     parent = b.get("parent") or "<none>"
     sessions = b["sessions"]
-    notes_dir = sms_root(cwd) / "branches" / branch / "notes"
-    notes_dir.mkdir(parents=True, exist_ok=True)
-    existing = sorted(p.name for p in notes_dir.iterdir() if p.is_file())
+    branch_notes = sms_root(cwd) / "branches" / branch / "notes"
+    branch_notes.mkdir(parents=True, exist_ok=True)
+    branch_files = sorted(p.name for p in branch_notes.iterdir() if p.is_file())
+    global_notes = sms_root(cwd) / "notes"
+    global_notes.mkdir(parents=True, exist_ok=True)
+    global_files = sorted(p.name for p in global_notes.iterdir() if p.is_file())
     main_count = sum(1 for s in sessions.values() if s.get("is_main"))
     sub_count = len(sessions) - main_count
     print("=== sms context ===")
     print(f"Branch: {branch}  (parent: {parent})")
     print(f"Sessions on this branch: {len(sessions)} ({main_count} main, {sub_count} sub)")
     print()
-    print("sms branch memory — durable scratchpad shared by every session on this branch.")
-    print(f"  Path: {notes_dir}")
+    print("sms branch memory — durable scratchpad shared by every session on THIS branch.")
+    print(f"  Path: {branch_notes}")
     print("  Survives worktree moves (lives in .git, not the working tree).")
     print("  Use it for handoffs, findings, todos that other sessions on this branch should pick up.")
-    if existing:
-        print(f"  Existing files: {', '.join(existing)}")
+    if branch_files:
+        print(f"  Existing files: {', '.join(branch_files)}")
+    else:
+        print("  (empty — drop markdown files here as needed.)")
+    print()
+    print("sms global memory — shared across ALL branches of this repo.")
+    print(f"  Path: {global_notes}")
+    print("  Same .git-backed, git-untracked storage; not tied to any one branch.")
+    print("  Use it for repo-wide knowledge every branch should see.")
+    if global_files:
+        print(f"  Existing files: {', '.join(global_files)}")
     else:
         print("  (empty — drop markdown files here as needed.)")
     return 0
