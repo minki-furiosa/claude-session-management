@@ -6,17 +6,23 @@ set -euo pipefail
 
 SMS="${SMS_BIN:-sms}"
 
-# Read stdin JSON (best-effort). Claude provides `cwd` in the JSON payload.
+# Read stdin JSON (best-effort). Claude provides `cwd` and `session_id`.
 input=$(cat || true)
 project_dir=""
+session_id=""
 if [[ -n "$input" ]]; then
   project_dir=$(printf '%s' "$input" | python3 -c "import sys, json; d=json.loads(sys.stdin.read() or '{}'); print(d.get('cwd',''))" 2>/dev/null || true)
+  session_id=$(printf '%s' "$input" | python3 -c "import sys, json; d=json.loads(sys.stdin.read() or '{}'); print(d.get('session_id',''))" 2>/dev/null || true)
 fi
 if [[ -z "$project_dir" ]]; then
   project_dir="$PWD"
 fi
 
-ctx=$("$SMS" hook session-start --cwd "$project_dir" 2>/dev/null || true)
+if [[ -n "$session_id" ]]; then
+  ctx=$("$SMS" hook session-start --cwd "$project_dir" --session-id "$session_id" 2>/dev/null || true)
+else
+  ctx=$("$SMS" hook session-start --cwd "$project_dir" 2>/dev/null || true)
+fi
 if [[ -z "$ctx" ]]; then
   # Nothing to inject — emit empty hookSpecificOutput
   printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":""}}\n'

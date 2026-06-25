@@ -60,3 +60,42 @@ def test_hook_with_cwd_argument(scratch_repo: Path, isolated_home: Path) -> None
                      cwd=isolated_home)
     assert result.returncode == 0, result.stderr
     assert "feature-x" in result.stdout
+
+
+def test_hook_identifies_forked_session(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """With --session-id of a fork, the hook tells it that it's a forked sub
+    and the history above belongs to the parent."""
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
+    t = json.loads((scratch_repo / ".git" / "sms" / "tree.json").read_text())
+    parent = next(iter(t["branches"]["feature-x"]["sessions"]))
+    (scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{parent}.jsonl").write_text("{}\n")
+    r = run_sms(["fork", "--from", parent, "--name", "reviewer", "--no-launch"], cwd=scratch_repo)
+    fork_uuid = r.stdout.strip().splitlines()[-1]
+
+    out = run_sms(["hook", "session-start", "--session-id", fork_uuid], cwd=scratch_repo).stdout
+    assert "session role" in out.lower()
+    assert "FORKED" in out
+    assert "reviewer" in out
+    assert "do not create or fork sessions" in out.lower()
+
+
+def test_hook_identifies_main_session(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
+    t = json.loads((scratch_repo / ".git" / "sms" / "tree.json").read_text())
+    main = next(iter(t["branches"]["feature-x"]["sessions"]))
+    out = run_sms(["hook", "session-start", "--session-id", main], cwd=scratch_repo).stdout
+    assert "MAIN session" in out
+
+
+def test_hook_no_role_without_session_id(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """Without --session-id, the role block is omitted (back-compat)."""
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
+    out = run_sms(["hook", "session-start"], cwd=scratch_repo).stdout
+    assert "session role" not in out.lower()
+    assert "sms context" in out.lower()  # branch context still emitted

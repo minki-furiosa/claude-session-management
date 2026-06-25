@@ -936,6 +936,36 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
         return 0
     parent = b.get("parent") or "<none>"
     sessions = b["sessions"]
+
+    # Session role: if we know which session this is, tell it whether it's the
+    # main session or a fork. A forked session carries a COPY of its parent's
+    # transcript, so without this it reads the parent's past actions (e.g. the
+    # sms-fork call that created it) as its own and re-runs them — spawning yet
+    # more sessions. Print this first and prominently.
+    sid = args.session_id
+    if sid and sid in sessions:
+        s = sessions[sid]
+        print("=== sms session role ===")
+        if s.get("is_main"):
+            print(f'You are the MAIN session for branch "{branch}".')
+        else:
+            pu = s.get("parent_uuid")
+            if pu and pu in sessions:
+                parent_label = sessions[pu].get("name") or pu[:8]
+            elif pu:
+                parent_label = pu[:8]
+            else:
+                parent_label = "another session"
+            sname = s.get("name") or sid[:8]
+            print(f'You are a FORKED sub-session named "{sname}" on branch "{branch}", '
+                  f'forked from {parent_label}.')
+            print("The conversation history above predates this fork: it is the PARENT "
+                  "session's transcript, given to you as context — NOT your own past "
+                  "actions. Do not re-run its setup, and do not create or fork sessions "
+                  "yourself. You are one of several parallel workers on this branch; "
+                  "focus only on the task you were forked to do.")
+        print()
+
     branch_notes = sms_root(cwd) / "branches" / branch / "notes"
     branch_notes.mkdir(parents=True, exist_ok=True)
     branch_files = sorted(p.name for p in branch_notes.iterdir() if p.is_file())
@@ -1041,6 +1071,7 @@ def main(argv: list[str] | None = None) -> int:
     p_hook_sub = p_hook.add_subparsers(dest="hook_sub", required=True)
     p_hss = p_hook_sub.add_parser("session-start")
     p_hss.add_argument("--cwd", default=None)
+    p_hss.add_argument("--session-id", default=None)
     p_hss.set_defaults(func=cmd_hook_session_start)
 
     for name, fn in [("mark-merged", cmd_mark_merged),
