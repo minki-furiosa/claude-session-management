@@ -36,20 +36,52 @@ def test_make_symlink_idempotent(scratch_repo: Path, isolated_home: Path) -> Non
         assert result.returncode == 0, result.stderr
 
 
-def test_make_symlink_refuses_to_overwrite_regular_file(
+def test_make_symlink_backs_up_differing_regular_file(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
+    """A regular file that DIFFERS from canonical is backed up, then replaced
+    with the symlink — no data lost, no refusal."""
     uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    # canonical has the real content
+    canonical = _canonical(scratch_repo, "feature-x", uuid)
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_text("canonical real content\n")
+    # projects dir has a differing stub
     link = _projects_link(isolated_home, scratch_repo, uuid)
     link.parent.mkdir(parents=True, exist_ok=True)
-    link.write_text("real file, not a symlink\n")
+    link.write_text("stub created by claude\n")
 
-    result = run_sms(
-        ["debug-symlink", "make", "feature-x", uuid], cwd=scratch_repo,
-    )
-    assert result.returncode == 1
-    assert link.read_text() == "real file, not a symlink\n"
-    assert not link.is_symlink()
+    result = run_sms(["debug-symlink", "make", "feature-x", uuid], cwd=scratch_repo)
+    assert result.returncode == 0, result.stderr
+    # link now points at canonical
+    assert link.is_symlink()
+    assert os.readlink(link) == str(canonical)
+    # the differing content was backed up
+    pd = link.parent
+    backups = list(pd.glob(f"{uuid}.jsonl.conflict-*"))
+    assert len(backups) == 1
+    assert backups[0].read_text() == "stub created by claude\n"
+    assert "Backed it up" in result.stderr
+
+
+def test_make_symlink_replaces_identical_regular_file_without_backup(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """A regular file IDENTICAL to canonical is replaced silently (no backup)."""
+    uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    canonical = _canonical(scratch_repo, "feature-x", uuid)
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_text("same bytes\n")
+    link = _projects_link(isolated_home, scratch_repo, uuid)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.write_text("same bytes\n")
+
+    result = run_sms(["debug-symlink", "make", "feature-x", uuid], cwd=scratch_repo)
+    assert result.returncode == 0, result.stderr
+    assert link.is_symlink()
+    assert os.readlink(link) == str(canonical)
+    # no backup created
+    assert not list(link.parent.glob(f"{uuid}.jsonl.conflict-*"))
 
 
 def test_remove_symlink(scratch_repo: Path, isolated_home: Path) -> None:

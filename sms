@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import fcntl
+import filecmp
 import json
 import os
 import shutil
@@ -73,6 +74,11 @@ def sms_root(cwd: Path) -> Path:
 
 def _iso_now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _file_timestamp() -> str:
+    """Filesystem-safe UTC timestamp for backup filenames (no colons)."""
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
 
 
 @contextmanager
@@ -196,10 +202,25 @@ def make_session_symlink(cwd: Path, branch: str, uuid: str) -> None:
             link.unlink()
             link.symlink_to(canonical)
     elif link.exists():
-        sys.stderr.write(
-            f"error: {link} exists as a regular file; refusing to overwrite\n"
-        )
-        raise SystemExit(1)
+        # A regular file sits where our symlink should go. This happens when a
+        # session UUID is opened in the picker while no symlink exists yet —
+        # Claude then writes a fresh jsonl in place, splitting it from the
+        # canonical copy. Recover automatically instead of refusing:
+        #   - identical to canonical  -> just replace with the symlink
+        #   - differs                 -> back it up first, then link
+        # so no data is ever silently lost.
+        if canonical.exists() and filecmp.cmp(link, canonical, shallow=False):
+            link.unlink()
+            link.symlink_to(canonical)
+        else:
+            backup = link.with_name(f"{uuid}.jsonl.conflict-{_file_timestamp()}")
+            link.rename(backup)
+            link.symlink_to(canonical)
+            sys.stderr.write(
+                f"warning: {link} existed as a regular file differing from the "
+                f"canonical session. Backed it up to {backup} and linked to "
+                f"canonical. Inspect the backup if you expected work there.\n"
+            )
     else:
         link.symlink_to(canonical)
 
