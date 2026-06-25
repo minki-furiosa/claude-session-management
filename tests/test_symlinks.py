@@ -121,3 +121,33 @@ def test_scan_returns_only_sms_symlinks(
     seen = dict(line.split("=", 1) for line in result.stdout.strip().splitlines() if line)
     assert sms_uuid in seen
     assert other_uuid not in seen
+
+
+def test_fix_visibility_rewrites_sdk_cli_entrypoint(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """sdk-cli entrypoint markers (which hide a session from the picker) are
+    rewritten to the interactive entrypoint, through the projects-dir symlink."""
+    import os as _os
+    uuid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+    canonical = _canonical(scratch_repo, "feature-x", uuid)
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_text(
+        '{"type":"queue-operation","sessionId":"%s"}\n'
+        '{"a":1,"entrypoint":"sdk-cli","sessionId":"%s"}\n'
+        '{"b":2,"entrypoint":"sdk-cli","sessionId":"%s"}\n' % (uuid, uuid, uuid)
+    )
+    # link it into the projects dir (as `sms` would)
+    run_sms(["debug-symlink", "make", "feature-x", uuid], cwd=scratch_repo)
+    link = _projects_link(isolated_home, scratch_repo, uuid)
+    assert link.is_symlink()
+
+    result = run_sms(["debug-symlink", "fix-visibility", uuid], cwd=scratch_repo)
+    assert result.returncode == 0, result.stderr
+
+    # canonical (followed through the symlink) no longer has sdk-cli
+    text = canonical.read_text()
+    assert "sdk-cli" not in text
+    assert text.count('"entrypoint":"claude-vscode"') == 2
+    # the symlink is intact (inode preserved — write followed the link)
+    assert link.is_symlink()

@@ -321,6 +321,8 @@ def cmd_debug_symlink(args: argparse.Namespace) -> int:
     elif args.sym_sub == "scan":
         for uuid, target in scan_projects_dir_for_sms_symlinks(cwd).items():
             print(f"{uuid}={target}")
+    elif args.sym_sub == "fix-visibility":
+        _make_session_picker_visible(cwd, args.uuid)
     else:
         return 2
     return 0
@@ -423,17 +425,24 @@ def cmd_new(args: argparse.Namespace) -> int:
     return 0
 
 
+INTERACTIVE_ENTRYPOINT = "claude-vscode"
+
+
 def materialize_session(cwd: Path, uuid: str, name: str = "") -> None:
-    """Trigger a brief non-interactive `claude --print` so the session's jsonl
-    accumulates enough real entries for Claude Code's `/resume` picker to show
-    it. Without this, a freshly-created session has no on-disk content and the
-    picker hides it.
+    """Give a freshly-created session enough on-disk content that Claude Code's
+    `/resume` picker will show it, with the chosen display name.
 
-    Passes `--name` so the picker also shows the chosen label (Claude stores
-    this as a `custom-title` entry in the jsonl).
+    Runs a brief non-interactive `claude --print`. Passes `--name` so the
+    picker shows the label (stored as a `custom-title` jsonl entry).
 
-    Spawned in the background — sms returns immediately and the user can
-    switch to VSCode while this finishes (typically <15 s).
+    IMPORTANT: `claude --print` marks the session with `entrypoint:sdk-cli`,
+    and the picker HIDES sdk-cli (non-interactive) sessions — even after later
+    interactive use. So immediately after the print run we rewrite those
+    markers to the interactive entrypoint via _make_session_picker_visible().
+
+    This runs synchronously (not backgrounded): the picker can't show the
+    session until both the print run and the entrypoint rewrite finish, so
+    there's nothing to gain by returning early.
     """
     cmd = ["claude", "--session-id", uuid]
     if name:
@@ -444,20 +453,40 @@ def materialize_session(cwd: Path, uuid: str, name: str = "") -> None:
         "Reply with only the word 'ok' and nothing else.",
     ]
     try:
-        subprocess.Popen(
+        subprocess.run(
             cmd,
             cwd=cwd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            start_new_session=True,
+            timeout=120,
         )
-    except OSError as e:
+    except (OSError, subprocess.TimeoutExpired) as e:
         sys.stderr.write(
-            f"warning: failed to spawn `claude --print` for materialization: {e}\n"
-            f"You may need to interact with session {uuid} once via terminal "
-            f"before it appears in the picker.\n"
+            f"warning: `claude --print` for materialization failed: {e}\n"
+            f"Session {uuid} may not appear in the picker until you open it "
+            f"once via terminal.\n"
         )
+        return
+    _make_session_picker_visible(cwd, uuid)
+
+
+def _make_session_picker_visible(cwd: Path, uuid: str) -> None:
+    """Rewrite `entrypoint:sdk-cli` markers (left by `claude --print`) to the
+    interactive entrypoint, so the /resume picker stops hiding the session.
+
+    Edits through the projects-dir path, which is normally a symlink to the
+    canonical jsonl; writing follows the link and preserves the canonical
+    file's inode.
+    """
+    path = claude_projects_dir(cwd) / f"{uuid}.jsonl"
+    if not path.exists():
+        return
+    content = path.read_text()
+    needle = '"entrypoint":"sdk-cli"'
+    if needle not in content:
+        return
+    path.write_text(content.replace(needle, f'"entrypoint":"{INTERACTIVE_ENTRYPOINT}"'))
 
 
 def stamp_session_title(canonical: Path, uuid: str, title: str) -> None:
@@ -1045,6 +1074,8 @@ def main(argv: list[str] | None = None) -> int:
     p_ds_rm = p_ds_sub.add_parser("remove")
     p_ds_rm.add_argument("uuid")
     p_ds_sub.add_parser("scan")
+    p_ds_fv = p_ds_sub.add_parser("fix-visibility")
+    p_ds_fv.add_argument("uuid")
     p_ds.set_defaults(func=cmd_debug_symlink)
 
     args = parser.parse_args(argv)
