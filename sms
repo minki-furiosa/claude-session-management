@@ -81,6 +81,22 @@ def _file_timestamp() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
 
 
+def _jsonl_has_real_conversation(path: Path) -> bool:
+    """True if the jsonl has at least one user message — i.e. real work, not
+    just metadata stubs (last-prompt / custom-title / agent-name / mode) that
+    Claude writes when a session UUID is opened without its content present."""
+    try:
+        for line in path.read_text().splitlines():
+            try:
+                if json.loads(line).get("type") == "user":
+                    return True
+            except json.JSONDecodeError:
+                continue
+    except OSError:
+        pass
+    return False
+
+
 @contextmanager
 def _tree_lock(sms_dir: Path) -> Iterator[None]:
     """Hold a file lock for the duration of a tree mutation."""
@@ -212,15 +228,21 @@ def make_session_symlink(cwd: Path, branch: str, uuid: str) -> None:
         if canonical.exists() and filecmp.cmp(link, canonical, shallow=False):
             link.unlink()
             link.symlink_to(canonical)
-        else:
+        elif _jsonl_has_real_conversation(link):
+            # The stray file holds an actual conversation — never discard it.
             backup = link.with_name(f"{uuid}.jsonl.conflict-{_file_timestamp()}")
             link.rename(backup)
             link.symlink_to(canonical)
             sys.stderr.write(
-                f"warning: {link} existed as a regular file differing from the "
-                f"canonical session. Backed it up to {backup} and linked to "
-                f"canonical. Inspect the backup if you expected work there.\n"
+                f"warning: {link} existed as a regular file with its own "
+                f"conversation, differing from the canonical session. Backed it "
+                f"up to {backup} and linked to canonical. Inspect the backup.\n"
             )
+        else:
+            # Just a metadata stub (no user messages) that Claude wrote when the
+            # UUID was opened without a symlink. Harmless — replace silently.
+            link.unlink()
+            link.symlink_to(canonical)
     else:
         link.symlink_to(canonical)
 

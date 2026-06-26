@@ -36,32 +36,58 @@ def test_make_symlink_idempotent(scratch_repo: Path, isolated_home: Path) -> Non
         assert result.returncode == 0, result.stderr
 
 
-def test_make_symlink_backs_up_differing_regular_file(
+def test_make_symlink_backs_up_differing_real_conversation(
     scratch_repo: Path, isolated_home: Path,
 ) -> None:
-    """A regular file that DIFFERS from canonical is backed up, then replaced
-    with the symlink — no data lost, no refusal."""
+    """A regular file with its OWN conversation (a user message) is backed up
+    before being replaced — never silently discarded."""
+    import json as _json
     uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    # canonical has the real content
     canonical = _canonical(scratch_repo, "feature-x", uuid)
     canonical.parent.mkdir(parents=True, exist_ok=True)
     canonical.write_text("canonical real content\n")
-    # projects dir has a differing stub
+    # projects dir file holds an actual user message → must be preserved
     link = _projects_link(isolated_home, scratch_repo, uuid)
     link.parent.mkdir(parents=True, exist_ok=True)
-    link.write_text("stub created by claude\n")
+    user_line = _json.dumps({"type": "user", "message": {"role": "user", "content": "hi"}})
+    link.write_text(user_line + "\n")
 
     result = run_sms(["debug-symlink", "make", "feature-x", uuid], cwd=scratch_repo)
     assert result.returncode == 0, result.stderr
-    # link now points at canonical
     assert link.is_symlink()
     assert os.readlink(link) == str(canonical)
-    # the differing content was backed up
-    pd = link.parent
-    backups = list(pd.glob(f"{uuid}.jsonl.conflict-*"))
+    backups = list(link.parent.glob(f"{uuid}.jsonl.conflict-*"))
     assert len(backups) == 1
-    assert backups[0].read_text() == "stub created by claude\n"
+    assert backups[0].read_text() == user_line + "\n"
     assert "Backed it up" in result.stderr
+
+
+def test_make_symlink_silently_replaces_metadata_stub(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """A differing regular file that is only a metadata stub (no user messages)
+    is replaced silently — no backup, no warning."""
+    import json as _json
+    uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    canonical = _canonical(scratch_repo, "feature-x", uuid)
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_text("canonical real content\n")
+    # projects dir has only metadata lines (what Claude leaves for an unopened uuid)
+    link = _projects_link(isolated_home, scratch_repo, uuid)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.write_text(
+        _json.dumps({"type": "last-prompt", "sessionId": uuid}) + "\n"
+        + _json.dumps({"type": "custom-title", "customTitle": "x", "sessionId": uuid}) + "\n"
+        + _json.dumps({"type": "mode", "mode": "normal", "sessionId": uuid}) + "\n"
+    )
+
+    result = run_sms(["debug-symlink", "make", "feature-x", uuid], cwd=scratch_repo)
+    assert result.returncode == 0, result.stderr
+    assert link.is_symlink()
+    assert os.readlink(link) == str(canonical)
+    # no backup, no warning
+    assert not list(link.parent.glob(f"{uuid}.jsonl.conflict-*"))
+    assert "Backed it up" not in result.stderr
 
 
 def test_make_symlink_replaces_identical_regular_file_without_backup(
