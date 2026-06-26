@@ -166,3 +166,32 @@ def test_fork_errors_without_parent_uuid_source(
     result = run_sms(["fork", "--name", "x"], cwd=scratch_repo)
     assert result.returncode != 0
     assert "CLAUDE_CODE_SESSION_ID" in result.stderr or "--from" in result.stderr
+
+
+def test_fork_strips_inherited_sms_hook_context(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """A fork must not inherit the parent's sms hook-context attachments
+    (which would make it think it's MAIN or forked from the grandparent)."""
+    import json as _json
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
+    t = _read_tree(scratch_repo)
+    parent = next(iter(t["branches"]["feature-x"]["sessions"]))
+    canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{parent}.jsonl"
+    # Parent jsonl carries a real message + an sms hook role attachment.
+    role_attachment = _json.dumps({
+        "type": "attachment",
+        "attachment": {"type": "hook_success",
+                       "stdout": "=== sms session role ===\nYou are the MAIN session for branch \"feature-x\"."},
+        "sessionId": parent,
+    })
+    canonical.write_text('{"msg":"real work"}\n' + role_attachment + "\n")
+
+    r = run_sms(["fork", "--from", parent, "--name", "child", "--no-launch"], cwd=scratch_repo)
+    fork_uuid = r.stdout.strip().splitlines()[-1]
+    fork_canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{fork_uuid}.jsonl"
+    text = fork_canonical.read_text()
+    # Inherited hook role attachment is gone; real message preserved.
+    assert "=== sms session role ===" not in text
+    assert "MAIN session" not in text
+    assert "real work" in text

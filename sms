@@ -518,6 +518,39 @@ def stamp_session_title(canonical: Path, uuid: str, title: str) -> None:
         canonical.write_text("\n".join(new_lines) + "\n")
 
 
+# Markers that uniquely identify sms's own SessionStart hook output.
+_SMS_HOOK_MARKERS = ("=== sms session role ===", "=== sms context ===")
+
+
+def strip_inherited_sms_hook_context(canonical: Path) -> None:
+    """Drop sms SessionStart-hook attachments copied from a parent transcript.
+
+    A fork is a byte copy of its parent's jsonl, so it inherits every
+    `hook_success` attachment the hook left in the parent — including
+    'You are the MAIN session' and 'forked from <grandparent>'. Left in place,
+    the fork reads those as facts about itself and may believe it is the
+    original. We remove them here; the fork's OWN next session start re-injects
+    correct, current context from the hook.
+
+    Only sms's own hook attachments (identified by the markers above) are
+    removed — other hooks' attachments and all real messages are preserved.
+    """
+    if not canonical.exists():
+        return
+    out: list[str] = []
+    for line in canonical.read_text().splitlines():
+        try:
+            d = json.loads(line)
+            if d.get("type") == "attachment" and d.get("attachment", {}).get("type") == "hook_success":
+                stdout = d["attachment"].get("stdout", "")
+                if any(m in stdout for m in _SMS_HOOK_MARKERS):
+                    continue  # drop this inherited sms-hook attachment
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        out.append(line)
+    canonical.write_text("\n".join(out) + "\n")
+
+
 def cmd_session_delete(args: argparse.Namespace) -> int:
     """Delete a session entirely: canonical files, symlinks in all worktrees,
     file-history/session-env caches, and the tree.json entry.
@@ -724,6 +757,12 @@ def cmd_fork(args: argparse.Namespace) -> int:
     # Appending alone isn't enough — Claude re-reads inherited entries on
     # resume and would otherwise override our title with the parent's.
     stamp_session_title(new_canonical, new_uuid, name)
+
+    # Drop the parent's sms hook-context attachments ('You are the MAIN
+    # session', 'forked from <grandparent>') copied into this fork — otherwise
+    # the fork reads them as facts about itself. Its own next start re-injects
+    # correct context.
+    strip_inherited_sms_hook_context(new_canonical)
 
     # Make the fork visible wherever the parent is visible.
     #
