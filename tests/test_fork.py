@@ -178,20 +178,36 @@ def test_fork_strips_inherited_sms_hook_context(
     t = _read_tree(scratch_repo)
     parent = next(iter(t["branches"]["feature-x"]["sessions"]))
     canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{parent}.jsonl"
-    # Parent jsonl carries a real message + an sms hook role attachment.
-    role_attachment = _json.dumps({
+    # Parent jsonl carries a real message + sms hook role/context attachments
+    # in BOTH shapes Claude records: hook_success (stdout) and
+    # hook_additional_context (content list).
+    succ = _json.dumps({
         "type": "attachment",
         "attachment": {"type": "hook_success",
                        "stdout": "=== sms session role ===\nYou are the MAIN session for branch \"feature-x\"."},
         "sessionId": parent,
     })
-    canonical.write_text('{"msg":"real work"}\n' + role_attachment + "\n")
+    addl = _json.dumps({
+        "type": "attachment",
+        "attachment": {"type": "hook_additional_context",
+                       "content": ["=== sms session role ===\nYou are the MAIN session for branch \"feature-x\"."]},
+        "sessionId": parent,
+    })
+    ctx = _json.dumps({
+        "type": "attachment",
+        "attachment": {"type": "hook_additional_context",
+                       "content": ["=== sms context ===\nBranch: feature-x"]},
+        "sessionId": parent,
+    })
+    canonical.write_text('{"msg":"real work"}\n' + succ + "\n" + addl + "\n" + ctx + "\n")
 
     r = run_sms(["fork", "--from", parent, "--name", "child", "--no-launch"], cwd=scratch_repo)
     fork_uuid = r.stdout.strip().splitlines()[-1]
     fork_canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{fork_uuid}.jsonl"
     text = fork_canonical.read_text()
-    # Inherited hook role attachment is gone; real message preserved.
+    # Inherited hook role/context attachments are gone (both shapes); real
+    # message preserved.
     assert "=== sms session role ===" not in text
+    assert "=== sms context ===" not in text
     assert "MAIN session" not in text
     assert "real work" in text

@@ -555,21 +555,44 @@ def stamp_session_title(canonical: Path, uuid: str, title: str) -> None:
 
 
 # Markers that uniquely identify sms's own SessionStart hook output.
-_SMS_HOOK_MARKERS = ("=== sms session role ===", "=== sms context ===")
+_SMS_HOOK_MARKERS = (
+    "=== sms session role ===",
+    "=== sms context ===",
+    "=== sms rules ===",
+)
+
+
+def _attachment_texts(attachment: dict) -> list[str]:
+    """Collect the text payloads of a hook attachment, across the shapes Claude
+    Code uses: `hook_success` stores it in `stdout` (str); the
+    `hook_additional_context` attachment stores it in `content` (a list of
+    strings, or a str). We check all of them for sms markers."""
+    texts: list[str] = []
+    stdout = attachment.get("stdout")
+    if isinstance(stdout, str):
+        texts.append(stdout)
+    content = attachment.get("content")
+    if isinstance(content, str):
+        texts.append(content)
+    elif isinstance(content, list):
+        texts.extend(x for x in content if isinstance(x, str))
+    return texts
 
 
 def strip_inherited_sms_hook_context(canonical: Path) -> None:
     """Drop sms SessionStart-hook attachments copied from a parent transcript.
 
-    A fork is a byte copy of its parent's jsonl, so it inherits every
-    `hook_success` attachment the hook left in the parent — including
-    'You are the MAIN session' and 'forked from <grandparent>'. Left in place,
-    the fork reads those as facts about itself and may believe it is the
-    original. We remove them here; the fork's OWN next session start re-injects
-    correct, current context from the hook.
+    A fork is a byte copy of its parent's jsonl, so it inherits every hook
+    attachment the hook left in the parent — including 'You are the MAIN
+    session' and 'forked from <grandparent>'. Left in place, the fork reads
+    those as facts about itself and may believe it is the original (and repeat
+    the parent's actions, e.g. forking again). We remove them here; the fork's
+    OWN next session start re-injects correct, current context from the hook.
 
-    Only sms's own hook attachments (identified by the markers above) are
-    removed — other hooks' attachments and all real messages are preserved.
+    Claude records the hook's output in TWO attachment shapes — `hook_success`
+    (text in `stdout`) and `hook_additional_context` (text in `content`) — so
+    we check both. Only sms's own hook attachments (identified by the markers)
+    are removed; other hooks' attachments and all real messages are preserved.
     """
     if not canonical.exists():
         return
@@ -577,9 +600,9 @@ def strip_inherited_sms_hook_context(canonical: Path) -> None:
     for line in canonical.read_text().splitlines():
         try:
             d = json.loads(line)
-            if d.get("type") == "attachment" and d.get("attachment", {}).get("type") == "hook_success":
-                stdout = d["attachment"].get("stdout", "")
-                if any(m in stdout for m in _SMS_HOOK_MARKERS):
+            if d.get("type") == "attachment":
+                texts = _attachment_texts(d.get("attachment", {}))
+                if any(m in t for t in texts for m in _SMS_HOOK_MARKERS):
                     continue  # drop this inherited sms-hook attachment
         except (json.JSONDecodeError, AttributeError):
             pass
