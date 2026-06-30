@@ -211,3 +211,42 @@ def test_fork_strips_inherited_sms_hook_context(
     assert "=== sms context ===" not in text
     assert "MAIN session" not in text
     assert "real work" in text
+
+
+def test_fork_rewrites_session_ids_for_ui_rendering(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """Every sessionId in the fork's transcript becomes the fork's own uuid, so
+    the VSCode UI (which renders only matching-sessionId messages) shows the
+    inherited history instead of a near-empty transcript. parentUuid links are
+    left intact."""
+    import json as _json
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
+    t = _read_tree(scratch_repo)
+    parent = next(iter(t["branches"]["feature-x"]["sessions"]))
+    canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{parent}.jsonl"
+    # Parent transcript: messages carrying the PARENT's sessionId + a parentUuid link.
+    canonical.write_text(
+        _json.dumps({"type": "user", "uuid": "m1", "parentUuid": None,
+                     "message": {"role": "user", "content": "hi"}, "sessionId": parent}) + "\n"
+        + _json.dumps({"type": "assistant", "uuid": "m2", "parentUuid": "m1",
+                       "message": {"role": "assistant", "content": "yo"}, "sessionId": parent}) + "\n"
+    )
+
+    r = run_sms(["fork", "--from", parent, "--name", "child", "--no-launch"], cwd=scratch_repo)
+    fork_uuid = r.stdout.strip().splitlines()[-1]
+    fork_canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{fork_uuid}.jsonl"
+
+    seen_session_ids = set()
+    parent_uuids = []
+    for line in fork_canonical.read_text().splitlines():
+        d = _json.loads(line)
+        if "sessionId" in d:
+            seen_session_ids.add(d["sessionId"])
+        if d.get("type") in ("user", "assistant"):
+            parent_uuids.append(d.get("parentUuid"))
+    # All sessionIds are the fork's; the parent's never remains.
+    assert seen_session_ids == {fork_uuid}
+    assert parent not in seen_session_ids
+    # parentUuid chain preserved (m1->None, m2->m1).
+    assert parent_uuids == [None, "m1"]

@@ -8,6 +8,7 @@ import fcntl
 import filecmp
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -579,6 +580,25 @@ def _attachment_texts(attachment: dict) -> list[str]:
     return texts
 
 
+_SESSION_ID_RE = re.compile(r'("sessionId":\s*")[0-9a-fA-F-]{36}(")')
+
+
+def rewrite_session_ids(canonical: Path, new_uuid: str) -> None:
+    """Reassign every `sessionId` field in a jsonl to `new_uuid`.
+
+    Used by `sms fork`: the copied parent transcript keeps the parent's
+    sessionId on every line. Claude loads a session by filename so this is
+    irrelevant to model context, but Claude Code's VSCode UI renders only the
+    messages whose sessionId equals the session being viewed — so without this
+    a fork appears almost empty in the picker/transcript even though the model
+    sees the full history. Only the `sessionId` field is touched; message uuids
+    and parentUuid links are left intact.
+    """
+    if not canonical.exists():
+        return
+    canonical.write_text(_SESSION_ID_RE.sub(rf'\g<1>{new_uuid}\g<2>', canonical.read_text()))
+
+
 def strip_inherited_sms_hook_context(canonical: Path) -> None:
     """Drop sms SessionStart-hook attachments copied from a parent transcript.
 
@@ -810,6 +830,13 @@ def cmd_fork(args: argparse.Namespace) -> int:
         name = args.name or _default_session_name(branch, existing)
         t.add_session(branch, new_uuid, name, parent_uuid, False)
         t.save()
+
+    # Reassign every sessionId in the copied transcript to this fork's uuid.
+    # Claude resumes by filename so model context is unaffected, but the VSCode
+    # extension renders only messages whose sessionId matches the session being
+    # viewed — without this a fork opens to a nearly empty transcript because
+    # its inherited messages still carry the parent's sessionId.
+    rewrite_session_ids(new_canonical, new_uuid)
 
     # Rewrite the copied jsonl's title metadata: strip the parent's
     # custom-title/agent-name lines and prepend fresh ones for the fork.
