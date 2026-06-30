@@ -69,6 +69,20 @@ def sms_root(cwd: Path) -> Path:
     return find_main_git_dir(cwd) / "sms"
 
 
+def rules_path(cwd: Path) -> Path:
+    """User-editable rules file, injected into every sms session on this repo."""
+    return sms_root(cwd) / "rules.md"
+
+
+DEFAULT_RULES = """\
+# sms rules — injected into every sms session on this repo. Edit this file freely.
+
+- Stay on the branch you were given. sms ties this session to one specific git
+  branch; do not switch branches or create new ones on your own. If the work
+  seems to need a different or a new branch, ask the user first.
+"""
+
+
 # -------------------------- Tree class and locking ---------------------------
 
 
@@ -981,6 +995,26 @@ def cmd_tree(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rules(args: argparse.Namespace) -> int:
+    """Print the path to this repo's sms rules file (creating it with a default
+    template if absent). Edit it with e.g. `code "$(sms rules)"`.
+
+    The file's contents are injected into every sms session at start, so it's
+    where you put standing instructions for sessions on this repo.
+    """
+    cwd = Path.cwd()
+    path = rules_path(cwd)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(DEFAULT_RULES)
+        sys.stderr.write(f"created default rules file at {path}\n")
+    if args.show:
+        print(path.read_text())
+    else:
+        print(path)
+    return 0
+
+
 def cmd_hook_session_start(args: argparse.Namespace) -> int:
     """Emit context block for current branch if it's in tree.json. Silent no-op if not."""
     cwd = Path(args.cwd).resolve() if args.cwd else Path.cwd()
@@ -1028,6 +1062,16 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
                   "shown in the inherited history was the parent forking, not a pending "
                   "task for you.")
         print()
+
+    # User-defined rules: free-form text the user maintains in rules.md,
+    # injected verbatim into every sms session. Edit via `sms rules`.
+    rules_file = rules_path(cwd)
+    if rules_file.exists():
+        rules_text = rules_file.read_text().strip()
+        if rules_text:
+            print("=== sms rules ===")
+            print(rules_text)
+            print()
 
     branch_notes = sms_root(cwd) / "branches" / branch / "notes"
     branch_notes.mkdir(parents=True, exist_ok=True)
@@ -1125,6 +1169,11 @@ def main(argv: list[str] | None = None) -> int:
     p_tree.add_argument("--all", action="store_true",
                         help="include merged and backlog branches")
     p_tree.set_defaults(func=cmd_tree)
+
+    p_rules = sub.add_parser("rules",
+                             help="print path to the repo's sms rules file (injected into every session)")
+    p_rules.add_argument("--show", action="store_true", help="print the rules content instead of the path")
+    p_rules.set_defaults(func=cmd_rules)
 
     p_sm = sub.add_parser("set-main", help="mark a session as the branch's main")
     p_sm.add_argument("target")

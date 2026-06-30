@@ -19,6 +19,7 @@ Default `--name` if you omit it: branch name for the first session, `<branch> (2
 
 | Command | Effect |
 |---|---|
+| `sms rules` | Print path to this repo's rules file (creates a default if absent). Its contents are injected into every sms session at start — put standing instructions there. Edit with `code "$(sms rules)"`. `--show` prints the content. |
 | `sms tree` | Branch tree. `★` = current branch. State `[merged]` / `[backlog]` hidden by default. |
 | `sms tree --all` | Include merged + backlog branches. |
 | `sms sessions` | Sessions on the current branch. `*` = main. |
@@ -114,6 +115,12 @@ sms global memory — shared across ALL branches of this repo.
   Use it for repo-wide knowledge every branch should see.
   Existing files: <list> | (empty — drop markdown files here as needed.)
 ```
+
+If `<repo>/.git/sms/rules.md` exists, its contents are injected too, as a
+`=== sms rules ===` block (your standing instructions for every session —
+see `sms rules`). For a forked session, a `=== sms session role ===` block
+states the session's own id so it can tell its own actions from the parent's
+inherited transcript.
 
 Sessions on non-sms branches see nothing — hook is a silent no-op.
 
