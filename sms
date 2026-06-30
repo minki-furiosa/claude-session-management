@@ -771,6 +771,92 @@ def cmd_adopt(args: argparse.Namespace) -> int:
     return 0
 
 
+def _append_custom_title(canonical: Path, uuid: str, name: str) -> None:
+    """Append a custom-title/agent-name pair (parentUuid-free metadata lines) so
+    the picker shows `name`. Safe for an adopted session: it doesn't touch any
+    existing line, so no chain breaks and no field types change."""
+    if not name:
+        return
+    with open(canonical, "a") as f:
+        f.write(json.dumps({"type": "custom-title", "customTitle": name, "sessionId": uuid}) + "\n")
+        f.write(json.dumps({"type": "agent-name", "agentName": name, "sessionId": uuid}) + "\n")
+
+
+def cmd_adopt_session(args: argparse.Namespace) -> int:
+    """Bring an EXISTING on-disk session (one created without sms) under sms
+    management on the current branch.
+
+    Unlike `sms fork` (which copies a parent), this adopts a real session in
+    place: the jsonl already belongs to this uuid, so we only relocate it to
+    canonical storage, symlink it back, and register it. No transcript rewrite
+    is needed — the session's own sessionId/entrypoint are already correct —
+    so we touch nothing inside the file except (optionally) appending a title.
+
+    Looks for <uuid>.jsonl as a regular file in the current worktree's projects
+    dir. Registers the current branch if it isn't tracked yet (parent=None).
+    """
+    cwd = Path.cwd()
+    branch = current_branch_or_none(cwd)
+    if branch is None:
+        sys.stderr.write("error: detached HEAD; sms adopt-session requires a named branch\n")
+        return 1
+
+    uuid = args.uuid
+    src = claude_projects_dir(cwd) / f"{uuid}.jsonl"
+    if src.is_symlink():
+        sys.stderr.write(
+            f"error: {src} is already a symlink — session {uuid} looks already "
+            f"adopted (or managed elsewhere).\n"
+        )
+        return 1
+    if not src.exists():
+        sys.stderr.write(
+            f"error: no session file {src}. adopt-session takes a session that "
+            f"exists in THIS worktree's projects dir (run it from the worktree "
+            f"where you used that session).\n"
+        )
+        return 1
+
+    t = Tree.load(cwd)
+    if t.branch(branch) is not None and uuid in t.branch(branch)["sessions"]:
+        sys.stderr.write(f"error: session {uuid} is already registered on '{branch}'.\n")
+        return 1
+
+    # Register the branch if new.
+    if t.branch(branch) is None:
+        with _tree_lock(sms_root(cwd)):
+            t = Tree.load(cwd)
+            if t.branch(branch) is None:
+                t.add_branch(branch, None)
+                t.save()
+
+    # Relocate the real jsonl (and any subdir) to canonical storage. shutil.move
+    # is a rename on the same filesystem, so an open session keeps writing to the
+    # same inode — adopting the live session is safe.
+    canonical = canonical_session_path(cwd, branch, uuid)
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(canonical))
+    src_sub = claude_projects_dir(cwd) / uuid
+    if src_sub.is_dir() and not src_sub.is_symlink():
+        shutil.move(str(src_sub), str(canonical_session_subdir(cwd, branch, uuid)))
+
+    # Register the session (first one on the branch becomes main).
+    with _tree_lock(sms_root(cwd)):
+        t = Tree.load(cwd)
+        existing = len(t.branch(branch)["sessions"])
+        is_main = existing == 0
+        name = args.name or _default_session_name(branch, existing)
+        t.add_session(branch, uuid, name, None, is_main)
+        t.save()
+
+    if args.name:
+        _append_custom_title(canonical, uuid, args.name)
+
+    make_session_symlink(cwd, branch, uuid)
+    report_created_session(uuid, name)
+    return 0
+
+
 def cmd_checkout(args: argparse.Namespace) -> int:
     cwd = Path.cwd()
     result = subprocess.run(
@@ -1167,6 +1253,12 @@ def main(argv: list[str] | None = None) -> int:
     p_adopt.add_argument("--no-materialize", action="store_true",
                          help="skip the background `claude --print` materialize step")
     p_adopt.set_defaults(func=cmd_adopt)
+
+    p_as = sub.add_parser("adopt-session",
+                          help="bring an existing (non-sms) session in this worktree under sms on the current branch")
+    p_as.add_argument("uuid", help="UUID of the existing session (its <uuid>.jsonl is in this worktree's projects dir)")
+    p_as.add_argument("--name", default=None)
+    p_as.set_defaults(func=cmd_adopt_session)
 
     p_sn = sub.add_parser("session-new",
                           help="add a new blank session to the current sms-tracked branch")
