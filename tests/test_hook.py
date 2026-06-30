@@ -78,13 +78,11 @@ def test_hook_identifies_forked_session(
     assert "session role" in out.lower()
     assert "FORKED" in out
     assert "reviewer" in out
-    # The fork's own id is stated, so it can judge by id rather than by a vague rule.
-    assert fork_uuid in out
-    assert parent in out  # parent id is referenced as the inherited-context owner
-    # No blanket "don't fork" rule (that wrongly blocked explicit /sms-fork).
+    assert fork_uuid in out                 # the fork's own id is stated
+    assert parent in out                    # forked-from parent is named
+    assert "inherited from the parent" in out
+    # No blanket "don't fork" rule (it wrongly blocked an explicit /sms-fork).
     assert "do not create or fork sessions" not in out.lower()
-    # Instead, id-based guidance about /sms-fork forking THIS session.
-    assert "/sms-fork" in out
 
 
 def test_hook_identifies_main_session(

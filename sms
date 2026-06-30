@@ -599,6 +599,32 @@ def rewrite_session_ids(canonical: Path, new_uuid: str) -> None:
     canonical.write_text(_SESSION_ID_RE.sub(rf'\g<1>{new_uuid}\g<2>', canonical.read_text()))
 
 
+def strip_slash_command_turns(canonical: Path) -> None:
+    """Remove slash-command user turns (e.g. /sms-fork) copied from the parent.
+
+    On resume, Claude Code re-dispatches a slash command recorded in the
+    transcript — so a fork would re-run the very /sms-fork that created it and
+    spawn another session (observed: optimize-pdma (4) immediately forked (5)).
+    We drop the command INVOCATION turns (those carrying <command-name> /
+    <command-message>); the command's past effects remain as the assistant
+    messages around them, so history still reads correctly.
+    """
+    if not canonical.exists():
+        return
+    out: list[str] = []
+    for line in canonical.read_text().splitlines():
+        try:
+            d = json.loads(line)
+            if d.get("type") == "user":
+                c = d.get("message", {}).get("content")
+                if isinstance(c, str) and ("<command-name>" in c or "<command-message>" in c):
+                    continue  # drop slash-command invocation copied from parent
+        except (json.JSONDecodeError, AttributeError):
+            pass
+        out.append(line)
+    canonical.write_text("\n".join(out) + "\n")
+
+
 def strip_inherited_sms_hook_context(canonical: Path) -> None:
     """Drop sms SessionStart-hook attachments copied from a parent transcript.
 
@@ -850,6 +876,11 @@ def cmd_fork(args: argparse.Namespace) -> int:
     # correct context.
     strip_inherited_sms_hook_context(new_canonical)
 
+    # Drop slash-command invocations (e.g. /sms-fork) copied from the parent,
+    # so Claude doesn't re-dispatch the fork command on resume and spawn yet
+    # another session.
+    strip_slash_command_turns(new_canonical)
+
     # Make the fork visible wherever the parent is visible.
     #
     # Mirror the parent's existing symlinks: for every projects dir that has
@@ -1082,17 +1113,17 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
     parent = b.get("parent") or "<none>"
     sessions = b["sessions"]
 
-    # Session role: if we know which session this is, tell it whether it's the
-    # main session or a fork. A forked session carries a COPY of its parent's
-    # transcript, so without this it reads the parent's past actions (e.g. the
-    # sms-fork call that created it) as its own and re-runs them — spawning yet
-    # more sessions. Print this first and prominently.
+    # Session role: tell the session whether it's the branch's main or a fork.
+    # A fork is a copy of its parent's transcript, so without this it can read
+    # the parent's past work as its own. (The fork command itself is stripped
+    # from a fork's transcript at fork time, so re-dispatch can't recreate it;
+    # this block is the human-readable orientation.)
     sid = args.session_id
     if sid and sid in sessions:
         s = sessions[sid]
         sname = s.get("name") or sid[:8]
         print("=== sms session role ===")
-        print(f'Your session id is {sid} (name: "{sname}").')
+        print(f'You are session {sid} (name: "{sname}").')
         if s.get("is_main"):
             print(f'You are the MAIN session of branch "{branch}".')
         else:
@@ -1104,13 +1135,10 @@ def cmd_hook_session_start(args: argparse.Namespace) -> int:
             else:
                 parent_label = "another session"
             print(f'You are a FORKED sub-session of branch "{branch}", forked from {parent_label}.')
-            print("Decide by session id, not by what the transcript shows happening:")
-            print(f"  - Lines above with sessionId {sid} are YOUR actions.")
-            print("  - Lines with any other sessionId are the parent's, inherited as "
-                  "context when you were forked — not things you did or must repeat.")
-            print(f"  - A /sms-fork you receive now forks YOU ({sid}); a fork already "
-                  "shown in the inherited history was the parent forking, not a pending "
-                  "task for you.")
+            print("The transcript above is context inherited from the parent at fork "
+                  "time — it is not your own past work, and anything it shows being done "
+                  "(setup, forking, etc.) already happened in the parent. Continue from "
+                  "here with the user's instructions.")
         print()
 
     # User-defined rules: free-form text the user maintains in rules.md,

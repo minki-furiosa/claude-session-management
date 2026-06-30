@@ -250,3 +250,36 @@ def test_fork_rewrites_session_ids_for_ui_rendering(
     assert parent not in seen_session_ids
     # parentUuid chain preserved (m1->None, m2->m1).
     assert parent_uuids == [None, "m1"]
+
+
+def test_fork_strips_slash_command_turns(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """A fork must not inherit the parent's /sms-fork (or any slash-command)
+    invocation turn, or Claude would re-dispatch it on resume and fork again."""
+    import json as _json
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
+    t = _read_tree(scratch_repo)
+    parent = next(iter(t["branches"]["feature-x"]["sessions"]))
+    canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{parent}.jsonl"
+    slash = _json.dumps({
+        "type": "user", "uuid": "s1", "parentUuid": "m1",
+        "message": {"role": "user",
+                    "content": "<command-message>sms-fork</command-message>\n<command-name>/sms-fork</command-name>"},
+        "sessionId": parent,
+    })
+    real = _json.dumps({
+        "type": "user", "uuid": "m1", "parentUuid": None,
+        "message": {"role": "user", "content": "do the actual work"},
+        "sessionId": parent,
+    })
+    canonical.write_text(real + "\n" + slash + "\n")
+
+    r = run_sms(["fork", "--from", parent, "--name", "child", "--no-launch"], cwd=scratch_repo)
+    fork_uuid = r.stdout.strip().splitlines()[-1]
+    fork_canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{fork_uuid}.jsonl"
+    text = fork_canonical.read_text()
+    # slash-command invocation gone; real user message preserved
+    assert "<command-name>" not in text
+    assert "command-message" not in text
+    assert "do the actual work" in text
