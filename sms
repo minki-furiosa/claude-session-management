@@ -602,10 +602,12 @@ def prepare_fork_transcript(canonical: Path, new_uuid: str, name: str) -> None:
         elif t == "attachment":
             if _attachment_has_sms_marker(d.get("attachment", {})):  # (3) identity
                 a = d["attachment"]
-                if "stdout" in a:
-                    a["stdout"] = ""
-                if "content" in a:
-                    a["content"] = []
+                # Blank the text but KEEP each field's original type — Claude
+                # calls .startsWith on these on resume, so a str field that
+                # became a list would crash ("e.startsWith is not a function").
+                for k in ("stdout", "content"):
+                    if k in a:
+                        a[k] = "" if isinstance(a[k], str) else []
         elif t == "custom-title":
             if name:
                 d["customTitle"] = name  # (4) title
