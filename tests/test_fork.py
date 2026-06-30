@@ -283,3 +283,59 @@ def test_fork_strips_slash_command_turns(
     assert "<command-name>" not in text
     assert "command-message" not in text
     assert "do the actual work" in text
+
+
+def test_fork_transcript_preserves_parentuuid_chain(
+    scratch_repo: Path, isolated_home: Path,
+) -> None:
+    """The single invariant that kept breaking: prepare_fork_transcript must
+    NOT remove any line, so every parentUuid still resolves to a line that
+    exists. Builds a parent transcript mixing a real turn, a slash-command
+    turn, and an sms hook attachment — all chained — and verifies the fork's
+    chain is unbroken, sessionIds unified, slash defused, hook blanked, real
+    content kept."""
+    import json as _json
+    run_sms(["new", "feature-x", "--no-launch", "--no-materialize"], cwd=scratch_repo)
+    t = _read_tree(scratch_repo)
+    parent = next(iter(t["branches"]["feature-x"]["sessions"]))
+    canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{parent}.jsonl"
+
+    lines = [
+        {"type": "user", "uuid": "m1", "parentUuid": None,
+         "message": {"role": "user", "content": "real question"}, "sessionId": parent},
+        {"type": "assistant", "uuid": "a1", "parentUuid": "m1",
+         "message": {"role": "assistant", "content": "answer"}, "sessionId": parent},
+        {"type": "user", "uuid": "s1", "parentUuid": "a1",
+         "message": {"role": "user",
+                     "content": "<command-message>sms-fork</command-message>\n<command-name>/sms-fork</command-name>"},
+         "sessionId": parent},
+        {"type": "attachment", "uuid": "h1", "parentUuid": "s1",
+         "attachment": {"type": "hook_additional_context",
+                        "content": ["=== sms session role ===\nYou are the MAIN session"]},
+         "sessionId": parent},
+        {"type": "assistant", "uuid": "a2", "parentUuid": "h1",
+         "message": {"role": "assistant", "content": "ok forked"}, "sessionId": parent},
+    ]
+    canonical.write_text("\n".join(_json.dumps(x) for x in lines) + "\n")
+
+    r = run_sms(["fork", "--from", parent, "--name", "child", "--no-launch"], cwd=scratch_repo)
+    fork_uuid = r.stdout.strip().splitlines()[-1]
+    fork_canonical = scratch_repo / ".git" / "sms" / "sessions" / "feature-x" / f"{fork_uuid}.jsonl"
+
+    parsed = [_json.loads(l) for l in fork_canonical.read_text().splitlines()]
+    uuids = {d.get("uuid") for d in parsed if d.get("uuid")}
+
+    # No line removed: all 5 original uuids still present.
+    assert {"m1", "a1", "s1", "h1", "a2"} <= uuids
+    # parentUuid chain unbroken: every non-null parentUuid resolves.
+    for d in parsed:
+        p = d.get("parentUuid")
+        assert p is None or p in uuids, f"broken link: {d.get('uuid')} -> {p}"
+    # sessionIds unified to the fork.
+    assert {d["sessionId"] for d in parsed if "sessionId" in d} == {fork_uuid}
+    # slash defused, hook blanked, real content kept.
+    text = fork_canonical.read_text()
+    assert "<command-name>" not in text
+    assert "MAIN session" not in text
+    assert "real question" in text
+    assert "ok forked" in text
