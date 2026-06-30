@@ -19,7 +19,7 @@ Default `--name` if you omit it: branch name for the first session, `<branch> (2
 
 | Command | Effect |
 |---|---|
-| `sms rules` | Print path to this repo's rules file (creates a default if absent). Its contents are injected into every sms session at start — put standing instructions there. Edit with `code "$(sms rules)"`. `--show` prints the content. |
+| `sms rules` | Print path to this repo's rules file at `<repo>/.git/sms/rules.md` (creates a default if absent). `--show` prints the content. You usually don't need this command — just edit `<repo>/.git/sms/rules.md` directly; its contents inject into every sms session at start. |
 | `sms tree` | Branch tree. `★` = current branch. State `[merged]` / `[backlog]` hidden by default. |
 | `sms tree --all` | Include merged + backlog branches. |
 | `sms sessions` | Sessions on the current branch. `*` = main. |
@@ -74,6 +74,7 @@ Each `/sms-*` skill shells out to the corresponding CLI command.
 ```
 <main-repo>/.git/sms/
   tree.json                          # branch tree + session index
+  rules.md                           # user-edited rules injected into every session
   .lock                              # fcntl serialization
   sessions/
     <branch>/

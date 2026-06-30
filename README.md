@@ -117,6 +117,41 @@ Or from inside the session: `/sms-set-main`.
 
 ---
 
+## Session rules
+
+Standing instructions you want every sms session on this repo to follow live in:
+
+```
+<repo>/.git/sms/rules.md
+```
+
+Edit this file directly — it's plain markdown. Its contents are injected
+verbatim into every sms session at start (as an `=== sms rules ===` block), so
+changes apply to new sessions immediately. It's shared across all worktrees
+(it lives in `.git`) and never committed.
+
+The file is created with a default rule the first time it's needed; you can
+also create/locate it with:
+
+```bash
+sms rules          # prints the path (creating the default if absent)
+sms rules --show   # prints the current contents
+```
+
+But you don't need the command — once the file exists, just open
+`<repo>/.git/sms/rules.md` in your editor and edit it. To open it from a
+worktree without typing the full path:
+
+```bash
+code "$(git rev-parse --git-common-dir)/sms/rules.md"
+```
+
+Default rule shipped: stay on the branch you were given; don't switch or create
+branches on your own (sms binds a session to one git branch); ask first if a
+different branch seems needed.
+
+---
+
 ## Inter-session notes
 
 Every sms-managed branch gets a notes directory at
